@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>LuaVM</RootNamespace>
+    <AssemblyName>LuaVM</AssemblyName>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- NuGet 打包信息 -->
+    <PackageId>LuaVM.Wrapper</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>LuaVM Project</Authors>
+    <Description>
+      C# wrapper for Lua/LuaJIT/Luau virtual machines via P/Invoke.
+      Requires NativeLibrary.dll/.so/.dylib built from the C++ source.
+    </Description>
+
+    <!-- 原生库路径（NuGet RID 约定） -->
+    <RuntimeIdentifiers>win-x64;linux-x64;osx-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <!-- 将原生库复制到输出目录（开发模式） -->
+  <ItemGroup>
+    <None Update="NativeLibrary.dll" Condition="Exists('NativeLibrary.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

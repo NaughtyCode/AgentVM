@@ -1,0 +1,376 @@
+/**
+ * @file    lvm_api.cpp
+ * @brief   Lua VM Wrapper -- Public C ABI implementation
+ *
+ * Implements all C ABI functions declared in lvm_api.h.
+ * Each function: unwrap opaque -> null check -> call backend -> return.
+ */
+
+#include "lvm_api.h"
+#include "lvm_engine.hpp"
+
+#ifdef LVM_HAS_LUA55
+#include "lvm_backend_lua55.h"
+#endif
+
+#ifdef LVM_HAS_LUAJIT
+#include "lvm_backend_luajit.h"
+#endif
+
+#ifdef LVM_HAS_LUAU
+#include "lvm_backend_luau.h"
+#endif
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <new>
+
+// LUA_MULTRET: request all return values from lua_pcall
+// Defined as -1 in lua.h; defined here to avoid depending on Lua headers
+#ifndef LUA_MULTRET
+#define LUA_MULTRET (-1)
+#endif
+
+using namespace lvm;
+using namespace lvm::detail;
+
+// =========================================================================
+// Factory: create VM instance
+// =========================================================================
+
+extern "C" {
+
+LVM_API void* LVM_Create(int type)
+{
+    auto* op = new (std::nothrow) OpaqueState();
+    if (!op) {
+        return nullptr;
+    }
+
+    op->type = static_cast<VMType>(type);
+
+    switch (op->type) {
+#ifdef LVM_HAS_LUA55
+    case VMType::LUA_5_5:
+        op->backend = std::make_unique<Lua55Backend>();
+        break;
+#endif
+#ifdef LVM_HAS_LUAJIT
+    case VMType::LUAJIT:
+        op->backend = std::make_unique<LuaJITBackend>();
+        break;
+#endif
+#ifdef LVM_HAS_LUAU
+    case VMType::LUAU:
+        op->backend = std::make_unique<LuauBackend>();
+        break;
+#endif
+    default:
+        op->error.set("LVM_Create: unsupported VM type or backend not compiled");
+        delete op;
+        return nullptr;
+    }
+
+    try {
+        op->native_handle = op->backend->create_state();
+    } catch (const std::exception& e) {
+        op->error.set(std::string("LVM_Create: backend exception: ") + e.what());
+        delete op;
+        return nullptr;
+    } catch (...) {
+        op->error.set("LVM_Create: unknown backend exception");
+        delete op;
+        return nullptr;
+    }
+
+    if (!op->native_handle) {
+        op->error.set("LVM_Create: backend failed to create native state");
+        delete op;
+        return nullptr;
+    }
+
+    return wrap(op);
+}
+
+// =========================================================================
+// Destroy VM instance
+// =========================================================================
+
+LVM_API void LVM_Destroy(void* opaque)
+{
+    if (!opaque) return;
+
+    auto* op = unwrap(opaque);
+
+    if (op->native_handle && op->backend) {
+        try {
+            op->backend->destroy_state(op->native_handle);
+        } catch (...) {
+            /* ignore exceptions during destruction */
+        }
+        op->native_handle = nullptr;
+    }
+
+    op->backend.reset();
+    delete op;
+}
+
+// =========================================================================
+// Get last error
+// =========================================================================
+
+LVM_API const char* LVM_GetLastError(void* opaque)
+{
+    if (!opaque) return "null opaque";
+    auto* op = unwrap(opaque);
+    return op->error.get();
+}
+
+// =========================================================================
+// Script execution
+// =========================================================================
+
+LVM_API int LVM_ExecuteString(void* opaque, const char* code)
+{
+    if (!opaque) return -1;
+    auto* op = unwrap(opaque);
+
+    if (!code) {
+        op->error.set("LVM_ExecuteString: code is null");
+        return -1;
+    }
+
+    auto  L = op->native_handle;
+    auto& b = *op->backend;
+
+    int loadResult = b.load_string(L, code);
+    if (loadResult != 0) {
+        const char* err = b.tostring(L, -1);
+        op->error.set(err ? err : "unknown compile error");
+        b.settop(L, 0);
+        return -1;
+    }
+
+    int execResult = b.pcall(L, 0, LUA_MULTRET, 0);
+    if (execResult != 0) {
+        const char* err = b.tostring(L, -1);
+        op->error.set(err ? err : "unknown runtime error");
+        b.settop(L, 0);
+        return -1;
+    }
+
+    b.settop(L, 0);
+    op->error.clear();
+    return 0;
+}
+
+LVM_API int LVM_ExecuteFile(void* opaque, const char* filepath)
+{
+    if (!opaque) return -1;
+    auto* op = unwrap(opaque);
+
+    if (!filepath) {
+        op->error.set("LVM_ExecuteFile: filepath is null");
+        return -1;
+    }
+
+    auto  L = op->native_handle;
+    auto& b = *op->backend;
+
+    int loadResult = b.load_file(L, filepath);
+    if (loadResult != 0) {
+        const char* err = b.tostring(L, -1);
+        op->error.set(err ? err : "unknown file load error");
+        b.settop(L, 0);
+        return -1;
+    }
+
+    int execResult = b.pcall(L, 0, LUA_MULTRET, 0);
+    if (execResult != 0) {
+        const char* err = b.tostring(L, -1);
+        op->error.set(err ? err : "unknown runtime error");
+        b.settop(L, 0);
+        return -1;
+    }
+
+    b.settop(L, 0);
+    op->error.clear();
+    return 0;
+}
+
+// =========================================================================
+// Stack operations
+// =========================================================================
+
+LVM_API int LVM_GetTop(void* opaque)
+{
+    if (!opaque) return 0;
+    auto* op = unwrap(opaque);
+    return op->backend->gettop(op->native_handle);
+}
+
+LVM_API void LVM_SetTop(void* opaque, int index)
+{
+    if (!opaque) return;
+    auto* op = unwrap(opaque);
+    op->backend->settop(op->native_handle, index);
+}
+
+// =========================================================================
+// Push operations
+// =========================================================================
+
+LVM_API void LVM_PushNumber(void* opaque, double value)
+{
+    if (!opaque) return;
+    auto* op = unwrap(opaque);
+    op->backend->pushnumber(op->native_handle, value);
+}
+
+LVM_API void LVM_PushString(void* opaque, const char* str)
+{
+    if (!opaque) return;
+    auto* op = unwrap(opaque);
+    if (!str) {
+        op->error.set("LVM_PushString: null string");
+        return;
+    }
+    op->backend->pushstring(op->native_handle, str);
+}
+
+LVM_API void LVM_PushBoolean(void* opaque, int value)
+{
+    if (!opaque) return;
+    auto* op = unwrap(opaque);
+    op->backend->pushboolean(op->native_handle, value);
+}
+
+LVM_API void LVM_PushNil(void* opaque)
+{
+    if (!opaque) return;
+    auto* op = unwrap(opaque);
+    op->backend->pushnil(op->native_handle);
+}
+
+// =========================================================================
+// Type checks
+// =========================================================================
+
+LVM_API int LVM_IsNumber(void* opaque, int index)
+{
+    if (!opaque) return 0;
+    auto* op = unwrap(opaque);
+    return op->backend->isnumber(op->native_handle, index);
+}
+
+LVM_API int LVM_IsString(void* opaque, int index)
+{
+    if (!opaque) return 0;
+    auto* op = unwrap(opaque);
+    return op->backend->isstring(op->native_handle, index);
+}
+
+LVM_API int LVM_IsBoolean(void* opaque, int index)
+{
+    if (!opaque) return 0;
+    auto* op = unwrap(opaque);
+    return op->backend->isboolean(op->native_handle, index);
+}
+
+LVM_API int LVM_IsNil(void* opaque, int index)
+{
+    if (!opaque) return 0;
+    auto* op = unwrap(opaque);
+    return op->backend->isnil(op->native_handle, index);
+}
+
+// =========================================================================
+// Value extraction
+// =========================================================================
+
+LVM_API double LVM_ToNumber(void* opaque, int index)
+{
+    if (!opaque) return 0.0;
+    auto* op = unwrap(opaque);
+    return op->backend->tonumber(op->native_handle, index);
+}
+
+LVM_API const char* LVM_ToString(void* opaque, int index)
+{
+    if (!opaque) return nullptr;
+    auto* op = unwrap(opaque);
+    const char* result = op->backend->tostring(op->native_handle, index);
+    if (!result) {
+        op->error.set("LVM_ToString: not a string or index out of range");
+    }
+    return result;
+}
+
+LVM_API int LVM_ToBoolean(void* opaque, int index)
+{
+    if (!opaque) return 0;
+    auto* op = unwrap(opaque);
+    return op->backend->toboolean(op->native_handle, index);
+}
+
+// =========================================================================
+// Global variables
+// =========================================================================
+
+LVM_API void LVM_GetGlobal(void* opaque, const char* name)
+{
+    if (!opaque) return;
+    auto* op = unwrap(opaque);
+    if (!name) {
+        op->error.set("LVM_GetGlobal: null name");
+        return;
+    }
+    op->backend->getglobal(op->native_handle, name);
+}
+
+LVM_API void LVM_SetGlobal(void* opaque, const char* name)
+{
+    if (!opaque) return;
+    auto* op = unwrap(opaque);
+    if (!name) {
+        op->error.set("LVM_SetGlobal: null name");
+        return;
+    }
+    op->backend->setglobal(op->native_handle, name);
+}
+
+// =========================================================================
+// Table operations
+// =========================================================================
+
+LVM_API void LVM_NewTable(void* opaque)
+{
+    if (!opaque) return;
+    auto* op = unwrap(opaque);
+    op->backend->newtable(op->native_handle);
+}
+
+LVM_API void LVM_GetField(void* opaque, int index, const char* key)
+{
+    if (!opaque) return;
+    auto* op = unwrap(opaque);
+    if (!key) {
+        op->error.set("LVM_GetField: null key");
+        return;
+    }
+    op->backend->getfield(op->native_handle, index, key);
+}
+
+LVM_API void LVM_SetField(void* opaque, int index, const char* key)
+{
+    if (!opaque) return;
+    auto* op = unwrap(opaque);
+    if (!key) {
+        op->error.set("LVM_SetField: null key");
+        return;
+    }
+    op->backend->setfield(op->native_handle, index, key);
+}
+
+} /* extern "C" */

@@ -1,0 +1,26 @@
+build/
+
+# .NET build output
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.vs/
+.vs/
+
+# NuGet
+*.nupkg
+**/packages/
+
+# IDE
+.idea/
+*.swp
+*.sln.DotSettings.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PixelAgent
+*.log

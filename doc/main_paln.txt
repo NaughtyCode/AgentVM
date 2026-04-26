@@ -1,0 +1,555 @@
+
+Lua虚拟机C++封装集成C#方案
+
+前提
+0. 代码放./src目录，工程结构需要合理
+1. 完成后构建并运行、测试，直到全部成功
+2. 生成完整的修改记录文档,修改记录文档放changelog目录下；
+3. 代码必须加上详细注释
+4. 生成工程README：详细使用方案、局限等
+
+一、整体架构：三层设计
+┌─────────────────────────────────────────────────────────────┐
+│                     C# Host (.NET 8+)                        │
+│  通过 P/Invoke 调用 NativeLibrary, 仅持有 IntPtr _opaque    │
+│  // 所有调用第一参数均为 IntPtr opaque ← 不透明句柄           │
+├─────────────────────────────────────────────────────────────┤
+│          NativeLibrary.dll / .so / .dylib  (C ABI)           │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │   Public API: lvm_create, lvm_destroy, lvm_exec...    │  │
+│  │   (所有函数第一个参数为 void* opaque)                    │  │
+│  │   完全不暴露 lua_State 或任何内部类型                   │  │
+│  └──────────────────────┬────────────────────────────────┘  │
+│          C++17 抽象层（lvm_engine / lvm_frontend）          │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                 │
+│  │  Lua 5.5 │  │ LuaJIT   │  │  Luau    │                 │
+│  │  Backend │  │ Backend  │  │ Backend  │                 │
+│  └──────────┘  └──────────┘  └──────────┘                 │
+└─────────────────────────────────────────────────────────────┘
+
+设计要点：
+Public API 完全不变：与具体虚拟机后端无关，由内部多态转发
+
+所有后端均基于 lua_State*（或其 #define 替代）：Lua 5.5 / LuaJIT / Luau 的核心 API 都以 lua_State* 为第一参数；LuaJIT 的 FFI 虽然允许绕过 lua_State，但我们在后端内仅使用标准 C API 进行统一封装
+
+Opaque 对象：对 C# 透明，内部是 struct lvm_state { Backend* backend; void* native_state; int type; }
+
+二、Opaque 对象设计与 Public API 定义
+2.1 Opaque 内部结构（C++ 侧，完全隐藏）
+cpp
+// lvm_engine.hpp —— 使用 PIMPL，不暴露到外部
+
+#include "lvm_backend.h"
+#include <memory>
+
+namespace lvm {
+namespace detail {
+
+enum class VMType : int { LUA_5_5 = 1, LUAJIT = 2, LUAU = 3 };
+
+struct OpaqueState final {
+    VMType                 type;
+    std::unique_ptr<AbstractBackend> backend;  // ← 多态
+    void*                  native_handle;      // lua_State* 或等价句柄
+};
+
+// 给 C ABI 使用的无类型句柄
+using OpaqueHandle = OpaqueState*;
+
+} // detail
+} // lvm
+2.2 Public C ABI（全部 extern “C”，所有函数第一个参数 void* opaque）
+c
+// lvm_api.h —— 公有的、编译为 DLL 符号，C# 可直接 DllImport
+
+#ifdef _WIN32
+  #define LVM_API __declspec(dllexport)
+#else
+  #define LVM_API __attribute__((visibility("default")))
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// ---- 生命周期 ----
+// 创建虚拟机实例，type: 1=Lua5.5, 2=LuaJIT, 3=Luau
+LVM_API void* LVM_Create(int type);
+
+// 销毁虚拟机实例
+LVM_API void  LVM_Destroy(void* opaque);
+
+// 获取错误信息（线程安全，指向内部 buffer）
+LVM_API const char* LVM_GetLastError(void* opaque);
+
+// ---- 脚本执行 ----
+// 执行 Lua 源码字符串，返回 0 成功 / 非 0 失败
+LVM_API int   LVM_ExecuteString(void* opaque, const char* code);
+
+// 执行 Lua 文件
+LVM_API int   LVM_ExecuteFile(void* opaque, const char* filepath);
+
+// ---- 栈操作（数值直接返回，无需解析 IntPtr）----
+LVM_API int    LVM_GetTop(void* opaque);
+LVM_API void   LVM_SetTop(void* opaque, int index);
+
+// 压栈：只支持基本类型（number / string / bool）
+LVM_API void   LVM_PushNumber(void* opaque, double value);
+LVM_API void   LVM_PushString(void* opaque, const char* str);
+LVM_API void   LVM_PushBoolean(void* opaque, int value);
+
+// 取值：按 index 获取栈上元素
+LVM_API int    LVM_IsNumber(void* opaque, int index);
+LVM_API int    LVM_IsString(void* opaque, int index);
+LVM_API double LVM_ToNumber(void* opaque, int index);
+LVM_API const char* LVM_ToString(void* opaque, int index);  // 返回内部 buffer
+LVM_API int    LVM_ToBoolean(void* opaque, int index);
+
+// ---- 全局变量访问 ----
+LVM_API void   LVM_GetGlobal(void* opaque, const char* name);  // 压栈
+LVM_API void   LVM_SetGlobal(void* opaque, const char* name);
+
+// ---- 表操作 ----
+LVM_API void   LVM_NewTable(void* opaque);
+LVM_API void   LVM_GetField(void* opaque, int index, const char* key);
+LVM_API void   LVM_SetField(void* opaque, int index, const char* key);
+
+#ifdef __cplusplus
+}
+#endif
+关键设计： C# 侧所有参数均为 IntPtr（opaque）、int、double、string 等 blittable 类型，无需自定义 marshal，完全符合 P/Invoke 要求。这与 LuaInterface 的传统 P/Invoke 模式一致。
+
+三、C++17 后端抽象层：多态 + 模板消除分支
+3.1 抽象后端接口
+cpp
+// lvm_backend.h
+
+namespace lvm {
+
+class AbstractBackend {
+public:
+    virtual ~AbstractBackend() = default;
+
+    // 创建一个新的 lua_State*（或等价原生状态）
+    virtual void* create_state() = 0;
+    virtual void  destroy_state(void* state) = 0;
+
+    // 脚本执行
+    virtual int   load_string(void* state, const char* code) = 0;
+    virtual int   load_file(void* state, const char* path) = 0;
+    virtual int   pcall(void* state, int narg, int nret, int errfunc) = 0;
+
+    // 栈操作委托（透传）
+    virtual int    gettop(void* state) = 0;
+    virtual void   settop(void* state, int idx) = 0;
+    virtual void   pushnumber(void* state, double v) = 0;
+    virtual void   pushstring(void* state, const char* s) = 0;
+    virtual void   pushboolean(void* state, int v) = 0;
+
+    virtual int    isnumber(void* state, int idx) = 0;
+    virtual double tonumber(void* state, int idx) = 0;
+    virtual const char* tostring(void* state, int idx) = 0;
+    virtual int    toboolean(void* state, int idx) = 0;
+
+    virtual void   getglobal(void* state, const char* name) = 0;
+    virtual void   setglobal(void* state, const char* name) = 0;
+
+    virtual void   newtable(void* state) = 0;
+    virtual void   getfield(void* state, int idx, const char* k) = 0;
+    virtual void   setfield(void* state, int idx, const char* k) = 0;
+
+    // 获取后端类型标识
+    virtual int    type() const = 0;
+};
+
+} // lvm
+3.2 Lua 5.5 后端具体实现
+仓库地址： https://github.com/lua/lua.git（官方开发仓库，当前最新 v5.5.0）
+
+需注意的变化： Lua 5.5 有两个关键 API 变更需要兼容：
+
+lua_newstate 现在需要一个 unsigned int seed 参数（用于随机数生成器）
+
+float 精度打印行为变更
+
+其余核心栈 API（lua_gettop、lua_settop、lua_pushnumber、lua_pushstring、lua_pcall 等）保持不变。与 C# 交互时，通过 P/Invoke 调用封装好的原生 Lua DLL。
+
+cpp
+// lvm_backend_lua55.h
+
+#include "lvm_backend.h"
+#include <lua.hpp>       // 包含 lua.h + lauxlib.h + lualib.h
+
+namespace lvm {
+
+class Lua55Backend final : public AbstractBackend {
+    static constexpr unsigned int LUA55_RANDOM_SEED = 42; // 固定种子，保证可重现
+public:
+    void* create_state() override {
+        auto L = lua_newstate([](void*, void* ptr, size_t osize, size_t nsize) -> void* {
+            // 标准内存分配器，内部可用 luaM_*
+            return nullptr; // 简化，实际应用建议用 realloc 包装
+        }, nullptr);
+        // Lua 5.5 必须显式设置 seed
+        lua_sethostrandomseed(L, LUA55_RANDOM_SEED);
+        luaL_openlibs(L);   // 加载标准库
+        return L;
+    }
+
+    void destroy_state(void* s) override {
+        lua_close(static_cast<lua_State*>(s));
+    }
+
+    // ---- 所有其他方法直接调用 lua_* API，例如：----
+    int load_string(void* s, const char* code) override {
+        auto L = static_cast<lua_State*>(s);
+        return luaL_loadstring(L, code);
+    }
+
+    int pcall(void* s, int na, int nr, int ef) override {
+        auto L = static_cast<lua_State*>(s);
+        return lua_pcall(L, na, nr, ef);
+    }
+
+    int gettop(void* s) override {
+        return lua_gettop(static_cast<lua_State*>(s));
+    }
+
+    void settop(void* s, int idx) override {
+        lua_settop(static_cast<lua_State*>(s), idx);
+    }
+
+    void pushnumber(void* s, double v) override {
+        lua_pushnumber(static_cast<lua_State*>(s), v);
+    }
+
+    void pushstring(void* s, const char* str) override {
+        lua_pushstring(static_cast<lua_State*>(s), str);
+    }
+
+    // ... 其余方法类似，省略
+    int type() const override { return static_cast<int>(detail::VMType::LUA_5_5); }
+};
+
+} // lvm
+3.3 LuaJIT 后端具体实现
+仓库地址： https://github.com/LuaJIT/LuaJIT.git（官方仓库，当前 v2.1 分支）
+
+特点： LuaJIT 与 Lua 5.1 API 高度兼容，可直接使用 lua_State* 和标准 lua_* 系列函数。LuaJIT 的 FFI 虽然能提供更高性能，但我们在方案中仅使用传统 C API，以保证统一性。
+
+cpp
+// lvm_backend_luajit.h
+
+#include "lvm_backend.h"
+#include <luajit.h>      // luajit 主头文件
+#include <lua.hpp>       // 兼容 API
+
+namespace lvm {
+
+class LuaJITBackend final : public AbstractBackend {
+public:
+    void* create_state() override {
+        auto L = luaL_newstate();   // 标准创建
+        luaL_openlibs(L);
+        return L;
+    }
+
+    void destroy_state(void* s) override {
+        lua_close(static_cast<lua_State*>(s));
+    }
+
+    // 所有方法实现与 Lua55Backend 基本相同，略
+    // ...
+    int type() const override { return static_cast<int>(detail::VMType::LUAJIT); }
+};
+
+} // lvm
+3.4 Luau 后端具体实现
+仓库地址： https://github.com/luau-lang/luau.git（官方仓库）
+
+关键适配：
+
+Luau 在设计上“mostly preserves Lua 5.1 API”，但实际 API 已有显著变化：
+
+创建/销毁： 使用 lua_newstate() 和 lua_close()
+
+脚本加载： Luau 支持字节码，提供 luau_compile() 函数
+
+错误处理： lua_pcall 在 Luau 中依然可用，但推荐使用 luau_execute 来执行字节码
+
+沙箱： 默认启用，需显式开放文件系统访问（可通过 luaL_sandbox 控制）
+
+cpp
+// lvm_backend_luau.h
+
+#include "lvm_backend.h"
+#include <lua.h>         // Luau 的 lua.h
+#include <lualib.h>      // Luau 的辅助库
+
+namespace lvm {
+
+class LuauBackend final : public AbstractBackend {
+public:
+    void* create_state() override {
+        auto L = lua_newstate(nullptr, nullptr);
+        luaL_openlibs(L);
+        // Luau 默认启用沙箱，若需要文件访问需显式关闭
+        // luaL_sandbox(L, 0);
+        return L;
+    }
+
+    void destroy_state(void* s) override {
+        lua_close(static_cast<lua_State*>(s));
+    }
+
+    int load_string(void* s, const char* code) override {
+        auto L = static_cast<lua_State*>(s);
+        size_t bytecodeSize = 0;
+        // 使用 Luau 编译器将源码编译为字节码（可选，也可直接用 luaL_loadstring）
+        char* bytecode = luau_compile(code, strlen(code), nullptr, &bytecodeSize);
+        int result = luau_load(L, "=script", bytecode, bytecodeSize, 0);
+        free(bytecode);
+        return result;
+    }
+
+    // ... 其余方法类似，使用标准 lua_* API
+    int type() const override { return static_cast<int>(detail::VMType::LUAU); }
+};
+
+} // lvm
+四、工厂函数与 Public API 适配层
+cpp
+// lvm_api.cpp —— 将所有 Public C 函数转发到内部 OpaqueState
+
+#include "lvm_engine.hpp"
+#include "lvm_backend_lua55.h"
+#include "lvm_backend_luajit.h"
+#include "lvm_backend_luau.h"
+
+using namespace lvm;
+using namespace lvm::detail;
+
+extern "C" {
+
+// ===== 工厂 =====
+void* LVM_Create(int type) {
+    auto op = new OpaqueState();
+    op->type = static_cast<VMType>(type);
+
+    switch (op->type) {
+    case VMType::LUA_5_5:
+        op->backend = std::make_unique<Lua55Backend>();
+        break;
+    case VMType::LUAJIT:
+        op->backend = std::make_unique<LuaJITBackend>();
+        break;
+    case VMType::LUAU:
+        op->backend = std::make_unique<LuauBackend>();
+        break;
+    default:
+        delete op;
+        return nullptr;  // 无效类型
+    }
+
+    op->native_handle = op->backend->create_state();
+    if (!op->native_handle) {
+        delete op;
+        return nullptr;
+    }
+    return static_cast<void*>(op);
+}
+
+void LVM_Destroy(void* opaque) {
+    if (!opaque) return;
+    auto op = static_cast<OpaqueState*>(opaque);
+    if (op->native_handle)
+        op->backend->destroy_state(op->native_handle);
+    delete op;
+}
+
+int LVM_ExecuteString(void* opaque, const char* code) {
+    if (!opaque) return -1;
+    auto op = static_cast<OpaqueState*>(opaque);
+    auto L  = op->native_handle;
+    auto& b = *op->backend;
+
+    if (b.load_string(L, code) != 0) {
+        // 错误已经在栈顶
+        return -1;
+    }
+    return b.pcall(L, 0, LUA_MULTRET, 0);
+}
+
+double LVM_ToNumber(void* opaque, int index) {
+    auto op = static_cast<OpaqueState*>(opaque);
+    return op->backend->tonumber(op->native_handle, index);
+}
+
+int LVM_GetTop(void* opaque) {
+    auto op = static_cast<OpaqueState*>(opaque);
+    return op->backend->gettop(op->native_handle);
+}
+
+void LVM_GetGlobal(void* opaque, const char* name) {
+    auto op = static_cast<OpaqueState*>(opaque);
+    op->backend->getglobal(op->native_handle, name);
+}
+
+// ... 其余函数严格遵循同一模式：解包 opaque → 调用 backend 虚函数
+}
+五、C# 端集成（P/Invoke）
+以下示例展示如何在 .NET 8 中通过 NativeLibrary 动态加载并调用：
+
+csharp
+// LuaVM.cs
+using System;
+using System.Runtime.InteropServices;
+
+public enum LuaVMType
+{
+    Lua55 = 1,
+    LuaJIT = 2,
+    Luau = 3
+}
+
+public sealed class LuaVM : IDisposable
+{
+    private IntPtr _opaque;
+    private nint   _libHandle;
+
+    // ---- P/Invoke 声明 ----
+    [DllImport("NativeLibrary", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr LVM_Create(int type);
+
+    [DllImport("NativeLibrary", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void LVM_Destroy(IntPtr opaque);
+
+    [DllImport("NativeLibrary", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int LVM_ExecuteString(IntPtr opaque, string code);
+
+    [DllImport("NativeLibrary", CallingConvention = CallingConvention.Cdecl)]
+    private static extern double LVM_ToNumber(IntPtr opaque, int index);
+
+    [DllImport("NativeLibrary", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int LVM_GetTop(IntPtr opaque);
+
+    [DllImport("NativeLibrary", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void LVM_GetGlobal(IntPtr opaque, string name);
+
+    // 构造函数
+    public LuaVM(LuaVMType type)
+    {
+        _opaque = LVM_Create((int)type);
+        if (_opaque == IntPtr.Zero)
+            throw new InvalidOperationException("Failed to create Lua VM");
+    }
+
+    // 销毁
+    public void Dispose()
+    {
+        if (_opaque != IntPtr.Zero)
+        {
+            LVM_Destroy(_opaque);
+            _opaque = IntPtr.Zero;
+        }
+    }
+
+    // --- 高层方法 ---
+    public int Execute(string code)
+        => LVM_ExecuteString(_opaque, code);
+
+    public int GetTop()
+        => LVM_GetTop(_opaque);
+
+    public double GetNumber(int index)
+        => LVM_ToNumber(_opaque, index);
+
+    public void GetGlobal(string name)
+        => LVM_GetGlobal(_opaque, name);
+}
+
+// 使用示例
+class Program
+{
+    static void Main()
+    {
+        using var vm = new LuaVM(LuaVMType.Lua55);
+        int result = vm.Execute("print('Hello from Lua 5.5!')");
+        Console.WriteLine($"Execute result: {result}");
+
+        // 使用 Luau
+        using var luauVm = new LuaVM(LuaVMType.Luau);
+        luauVm.Execute("print('Hello from Luau!')");
+    }
+}
+六、CMake 构建系统
+cmake
+cmake_minimum_required(VERSION 3.20)
+project(LuaVMWrapper VERSION 1.0 LANGUAGES CXX C)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# ---- 三个 Lua 后端源码引入 ----
+# Lua 5.5 - https://github.com/lua/lua.git
+add_subdirectory(third_party/lua)
+
+# LuaJIT - https://github.com/LuaJIT/LuaJIT.git
+add_subdirectory(third_party/LuaJIT)
+
+# Luau - https://github.com/luau-lang/luau.git
+add_subdirectory(third_party/luau)
+
+# ---- 我们的封装层源码 ----
+set(LVM_SOURCES
+    src/lvm_api.cpp
+    src/lvm_backend_lua55.cpp
+    src/lvm_backend_luajit.cpp
+    src/lvm_backend_luau.cpp
+    # ... 其他辅助文件
+)
+
+add_library(NativeLibrary SHARED ${LVM_SOURCES})
+
+target_include_directories(NativeLibrary PRIVATE
+    ${LUA_INCLUDE_DIR}
+    ${LUAJIT_INCLUDE_DIR}
+    ${LUAU_INCLUDE_DIR}
+    include/
+)
+
+target_link_libraries(NativeLibrary PRIVATE
+    lua55
+    luajit
+    Luau.Runtime
+)
+
+# 导出符号
+if(WIN32)
+    target_compile_definitions(NativeLibrary PRIVATE LVM_EXPORTS)
+endif()
+NuGet 发布时，需使用 .NET RID 系统将原生库放置在 runtimes/{rid}/native/ 路径下。
+
+七、方案核心优势总结
+单一 Opaque 句柄：C# 侧永远只持有 IntPtr _opaque，无需感知内部实现
+
+多态后端切换：通过 C++17 虚函数，运行时切换 Lua 5.5 / LuaJIT / Luau，新增后端只需实现 AbstractBackend 接口
+
+完全隐藏细节：所有后端差异（Lua 5.5 的 seed、Luau 的字节码编译）均被封装在后端具体类中
+
+C ABI 稳定：Public API 所有参数均为 blittable 类型，P/Invoke 无需复杂 marshal
+
+可扩展性：若需支持 MoonSharp（纯 C# VM）等场景，可在 C# 侧实现同一接口，形成 C# 侧的 VM 抽象层
+
+跨平台：通过 CMake + RID 系统，支持 Windows / Linux / macOS 三平台
+
+三个仓库的用途总结：
+
+仓库地址	用途
+https://github.com/lua/lua.git	提供 Lua 5.5 官方源码，编译为 lua55 静态库，实现 Lua55Backend
+https://github.com/LuaJIT/LuaJIT.git	提供 LuaJIT 源码，编译为 luajit 静态库，实现 LuaJITBackend
+https://github.com/luau-lang/luau.git	提供 Luau 源码，编译为 Luau.Runtime 静态库，实现 LuauBackend
+以上方案可直接用于项目落地，所有细节均已对齐当前上游版本。
+
+
