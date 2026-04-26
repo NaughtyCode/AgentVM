@@ -7,9 +7,9 @@ A C++17 library that wraps Lua 5.5 / LuaJIT / Luau virtual machines behind a uni
 ```
 +-------------------------------------------------------------+
 |                     C# Host (.NET 8+)                        |
-|  P/Invoke -> NativeLibrary, only holds IntPtr _opaque        |
+|  P/Invoke -> AIPixelVM, only holds IntPtr _opaque        |
 +-------------------------------------------------------------+
-|          NativeLibrary.dll / .so / .dylib  (C ABI)           |
+|          AIPixelVM.dll / .so / .dylib  (C ABI)           |
 |  +-------------------------------------------------------+  |
 |  | Public API: LVM_Create, LVM_Destroy, LVM_Exec...      |  |
 |  | (All functions take void* opaque as first argument)    |  |
@@ -40,7 +40,7 @@ A C++17 library that wraps Lua 5.5 / LuaJIT / Luau virtual machines behind a uni
 
 ### C# Integration
 - .NET 8.0+
-- Built `NativeLibrary.dll` (or `.so` / `.dylib`)
+- Built `AIPixelVM.dll` (or `.so` / `.dylib`)
 
 ## Quick Start
 
@@ -52,7 +52,7 @@ cmake -S src -B build -DLVM_WITH_LUA55=ON
 cmake --build build --config Release
 ```
 
-Output: `build/Release/NativeLibrary.dll`
+Output: `build/Release/AIPixelVM.dll`
 
 ### 2. Run C++ Tests
 
@@ -89,7 +89,7 @@ if (result != 0)
     Console.WriteLine($"Error: {vm.GetLastError()}");
 ```
 
-Place `NativeLibrary.dll` in your C# project's output directory.
+Place `AIPixelVM.dll` in your C# project's output directory.
 
 ### CMake Build Options
 

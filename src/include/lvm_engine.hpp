@@ -9,7 +9,7 @@
  * - 引擎工具函数
  *
  * 设计要点（PIMPL 模式）：
- * OpaqueState 仅在 NativeLibrary 内部使用，外部（C# / C ABI）
+ * OpaqueState 仅在 AIPixelVM 内部使用，外部（C# / C ABI）
  * 仅持有 OpaqueHandle（即 void* / IntPtr），完全不感知内部布局。
  */
 

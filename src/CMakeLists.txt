@@ -1,8 +1,8 @@
 # =============================================================================
-# Lua VM Wrapper (NativeLibrary) — CMake 构建系统
+# Lua VM Wrapper (AIPixelVM) — CMake 构建系统
 # =============================================================================
 #
-# 本 CMake 脚本构建 NativeLibrary 动态库（.dll / .so / .dylib），
+# 本 CMake 脚本构建 AIPixelVM 动态库（.dll / .so / .dylib），
 # 将 Lua/LuaJIT/Luau 封装为统一的 C ABI 供 .NET P/Invoke 调用。
 #
 # 构建选项:
@@ -218,7 +218,7 @@ if(LVM_WITH_LUAU)
 endif()
 
 # =============================================================================
-# NativeLibrary 动态库
+# AIPixelVM 动态库
 # =============================================================================
 
 set(LVM_SOURCES
@@ -228,10 +228,10 @@ set(LVM_SOURCES
     lvm/lvm_backend_luau.cpp
 )
 
-add_library(NativeLibrary SHARED ${LVM_SOURCES})
+add_library(AIPixelVM SHARED ${LVM_SOURCES})
 
 # ---- 包含目录 ----
-target_include_directories(NativeLibrary
+target_include_directories(AIPixelVM
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
@@ -240,36 +240,36 @@ target_include_directories(NativeLibrary
 
 # ---- 编译定义：控制后端条件编译 ----
 if(LVM_WITH_LUA55)
-    target_compile_definitions(NativeLibrary PRIVATE LVM_HAS_LUA55)
-    target_link_libraries(NativeLibrary PRIVATE ${LUA55_LIBRARY})
+    target_compile_definitions(AIPixelVM PRIVATE LVM_HAS_LUA55)
+    target_link_libraries(AIPixelVM PRIVATE ${LUA55_LIBRARY})
 endif()
 
 if(LVM_WITH_LUAJIT)
-    target_compile_definitions(NativeLibrary PRIVATE LVM_HAS_LUAJIT)
+    target_compile_definitions(AIPixelVM PRIVATE LVM_HAS_LUAJIT)
 endif()
 
 if(LVM_WITH_LUAU)
-    target_compile_definitions(NativeLibrary PRIVATE LVM_HAS_LUAU)
+    target_compile_definitions(AIPixelVM PRIVATE LVM_HAS_LUAU)
 endif()
 
 # ---- 平台特定设置 ----
 if(LVM_PLATFORM_WINDOWS)
-    target_compile_definitions(NativeLibrary PRIVATE LVM_EXPORTS _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(AIPixelVM PRIVATE LVM_EXPORTS _CRT_SECURE_NO_WARNINGS)
 
     # 导出所有 extern "C" 符号
-    set_target_properties(NativeLibrary PROPERTIES
+    set_target_properties(AIPixelVM PROPERTIES
         WINDOWS_EXPORT_ALL_SYMBOLS ON
     )
 endif()
 
 # ---- MSVC 特定设置 ----
 if(MSVC)
-    target_compile_options(NativeLibrary PRIVATE /W3 /utf-8)
+    target_compile_options(AIPixelVM PRIVATE /W3 /utf-8)
     target_compile_options(lua55 PRIVATE /utf-8)
 endif()
 
 # ---- 安装规则 ----
-install(TARGETS NativeLibrary
+install(TARGETS AIPixelVM
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
@@ -295,7 +295,7 @@ if(LVM_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
 
-    target_link_libraries(test_lvm PRIVATE NativeLibrary)
+    target_link_libraries(test_lvm PRIVATE AIPixelVM)
 
     if(MSVC)
         target_compile_options(test_lvm PRIVATE /W3 /utf-8)
@@ -317,5 +317,5 @@ message(STATUS "  Lua 5.5:    ${LVM_WITH_LUA55}")
 message(STATUS "  LuaJIT:     ${LVM_WITH_LUAJIT}")
 message(STATUS "  Luau:       ${LVM_WITH_LUAU}")
 message(STATUS "  Tests:      ${LVM_BUILD_TESTS}")
-message(STATUS "  Output:     NativeLibrary${CMAKE_SHARED_LIBRARY_SUFFIX}")
+message(STATUS "  Output:     AIPixelVM${CMAKE_SHARED_LIBRARY_SUFFIX}")
 message(STATUS "")

@@ -2,7 +2,7 @@
  * @file    LuaVM.cs
  * @brief   Lua VM Wrapper — C# 集成层
  *
- * 通过 P/Invoke 调用 NativeLibrary (C ABI) 实现 Lua 虚拟机集成。
+ * 通过 P/Invoke 调用 AIPixelVM (C ABI) 实现 Lua 虚拟机集成。
  * 所有调用通过 IntPtr _opaque 句柄，内部实现完全隐藏。
  *
  * 使用示例:
@@ -37,7 +37,7 @@ namespace LuaVM
     ///
     /// 设计要点:
     /// - 实现 IDisposable 以自动管理非托管内存
-    /// - 所有方法通过 P/Invoke 调用 NativeLibrary，第一个参数为 IntPtr _opaque
+    /// - 所有方法通过 P/Invoke 调用 AIPixelVM，第一个参数为 IntPtr _opaque
     /// - 不暴露任何内部状态类型，C# 侧完全透明
     /// - 线程安全：同一个实例不应被多线程并发使用（不同实例之间安全）
     /// </summary>
@@ -54,7 +54,7 @@ namespace LuaVM
          * P/Invoke 声明 —— 全部使用 Cdecl 调用约定，参数仅为 blittable 类型
          * ==================================================================== */
 
-        private const string NativeLib = "NativeLibrary";
+        private const string NativeLib = "AIPixelVM";
 
         // ---- 生命周期 ----
         [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
@@ -149,7 +149,7 @@ namespace LuaVM
             {
                 throw new InvalidOperationException(
                     $"Failed to create Lua VM. Type: {type}. " +
-                    "Ensure NativeLibrary is available and the backend is compiled.");
+                    "Ensure AIPixelVM is available and the backend is compiled.");
             }
         }
 

@@ -5,7 +5,7 @@
 ### Added
 
 #### Architecture & Design (based on `./doc/main_paln.txt`)
-- Three-layer architecture: C# Host -> NativeLibrary (C ABI) -> C++17 Abstraction Layer
+- Three-layer architecture: C# Host -> AIPixelVM (C ABI) -> C++17 Abstraction Layer
 - Polymorphic backend system with `AbstractBackend` virtual interface
 - Opaque handle pattern (`OpaqueState`) hiding all internal details from C# / C ABI users
 - Support for three Lua virtual machines: Lua 5.5, LuaJIT, Luau
@@ -38,7 +38,7 @@
 - CMake >= 3.20, C++17 required
 - `FetchContent` to automatically download Lua 5.4.7 from lua.org
 - Static library `lua55` built from Lua core source files (excluding lua.c / luac.c)
-- `NativeLibrary` shared library (.dll/.so/.dylib) with all backends
+- `AIPixelVM` shared library (.dll/.so/.dylib) with all backends
 - Build options: `LVM_WITH_LUA55`, `LVM_WITH_LUAJIT`, `LVM_WITH_LUAU`, `LVM_BUILD_TESTS`
 - MSVC `/utf-8` flag for Unicode source file support
 - `WINDOWS_EXPORT_ALL_SYMBOLS` for automatic DLL symbol export

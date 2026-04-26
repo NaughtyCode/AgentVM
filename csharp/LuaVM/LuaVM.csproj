@@ -14,7 +14,7 @@
     <Authors>LuaVM Project</Authors>
     <Description>
       C# wrapper for Lua/LuaJIT/Luau virtual machines via P/Invoke.
-      Requires NativeLibrary.dll/.so/.dylib built from the C++ source.
+      Requires AIPixelVM.dll/.so/.dylib built from the C++ source.
     </Description>
 
     <!-- 原生库路径（NuGet RID 约定） -->
@@ -23,7 +23,7 @@
 
   <!-- 将原生库复制到输出目录（开发模式） -->
   <ItemGroup>
-    <None Update="NativeLibrary.dll" Condition="Exists('NativeLibrary.dll')">
+    <None Update="AIPixelVM.dll" Condition="Exists('AIPixelVM.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

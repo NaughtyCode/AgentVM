@@ -10,7 +10,7 @@
  * - 不同虚拟机后端切换
  * - 错误处理
  *
- * 运行前需确保 NativeLibrary.dll 在可搜索路径中
+ * 运行前需确保 AIPixelVM.dll 在可搜索路径中
  * (如程序目录、runtimes/win-x64/native/ 或 PATH 中)。
  */
 

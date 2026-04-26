@@ -1,6 +1,6 @@
 /**
  * @file    test_main.cpp
- * @brief   NativeLibrary 单元测试
+ * @brief   AIPixelVM 单元测试
  *
  * 测试覆盖：
  * - 生命周期管理（创建 / 销毁）
