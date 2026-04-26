@@ -28,6 +28,17 @@
 #include <filesystem>
 #include <algorithm>
 #include <vector>
+#include <cstdint>
+
+// 条件包含 Lua 头文件 —— 用于外部函数注册（lua_pushcclosure 等）
+// CMake 已将 LUA55_INCLUDE_DIR 加入 AIPixelVM 的 PRIVATE 包含目录
+// 注意：lua.h 不含 extern "C" 保护，从 C++ 编译时须手动包裹
+#if defined(LVM_HAS_LUA55) || defined(LVM_HAS_LUAJIT)
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
+#endif
 
 // LUA_MULTRET: request all return values from lua_pcall
 // Defined as -1 in lua.h; defined here to avoid depending on Lua headers
@@ -505,6 +516,151 @@ LVM_API int LVM_LoadScriptFilesEx(void* opaque, const char* dirpath, const char*
     }
 
     return success_count;
+}
+
+// =========================================================================
+// External function registration — bridge function and API implementation
+// =========================================================================
+
+#if defined(LVM_HAS_LUA55) || defined(LVM_HAS_LUAJIT)
+/**
+ * @brief 桥接函数：将 Lua C 函数调用转发至用户注册的回调
+ *
+ * 所有通过 LVM_RegisterFunction / LVM_RegisterModule 注册的外部函数
+ * 最终都由本函数作为入口，它负责：
+ * 1. 从 Lua upvalue 中取出 opaque 句柄与用户回调指针
+ * 2. 调用用户回调（回调通过 Public API 读写 VM 栈）
+ * 3. 将回调返回值（压入栈中的结果数量）返回给 Lua
+ *
+ * @param L  Lua 原生状态指针
+ * @return 用户回调压入栈中的返回值数量
+ */
+static int lvm_bridge_callback(lua_State* L)
+{
+    // 从第一个 upvalue 取出 opaque 句柄（light userdata）
+    void* opaque = lua_touserdata(L, lua_upvalueindex(1));
+
+    // 从第二个 upvalue 取出用户回调函数指针
+    // 通过 uintptr_t 安全地在函数指针与 void* 之间转换
+    LVM_ExternalFunc func = reinterpret_cast<LVM_ExternalFunc>(
+        reinterpret_cast<uintptr_t>(lua_touserdata(L, lua_upvalueindex(2))));
+
+    if (!opaque || !func) {
+        lua_pushstring(L, "lvm_bridge_callback: invalid opaque or callback");
+        lua_error(L);
+        return 0;
+    }
+
+    // 调用用户回调
+    // 回调通过 Public API (LVM_ToNumber, LVM_PushNumber, etc.) 操作栈:
+    //   - 读取: LVM_ToNumber(opaque, 1)..LVM_ToNumber(opaque, N) 读取 Lua 参数
+    //   - 写入: LVM_Push*(opaque, ...) 压入返回值
+    int nresults = func(opaque);
+
+    return nresults;
+}
+#endif // LVM_HAS_LUA55 || LVM_HAS_LUAJIT
+
+LVM_API int LVM_RegisterFunction(void* opaque, const char* name, LVM_ExternalFunc func)
+{
+    if (!opaque) return -1;
+    auto* op = unwrap(opaque);
+
+    if (!name || !name[0]) {
+        op->error.set("LVM_RegisterFunction: name is null or empty");
+        return -1;
+    }
+    if (!func) {
+        op->error.set("LVM_RegisterFunction: func is null");
+        return -1;
+    }
+
+#if defined(LVM_HAS_LUA55) || defined(LVM_HAS_LUAJIT)
+    auto* L = static_cast<lua_State*>(op->native_handle);
+
+    // 压入两个 upvalue：
+    //   1. opaque 句柄（light userdata，供桥接函数使用）
+    //   2. 用户回调指针（通过 uintptr_t 转为 light userdata 安全存储）
+    lua_pushlightuserdata(L, opaque);
+    lua_pushlightuserdata(L, reinterpret_cast<void*>(
+        reinterpret_cast<uintptr_t>(func)));
+
+    // 创建 C 闭包: 桥接函数 + 2 个 upvalue
+    lua_pushcclosure(L, lvm_bridge_callback, 2);
+
+    // 设置为全局变量
+    lua_setglobal(L, name);
+
+    op->error.clear();
+    return 0;
+#elif defined(LVM_HAS_LUAU)
+    op->error.set("LVM_RegisterFunction: not yet supported for Luau backend");
+    return -1;
+#else
+    op->error.set("LVM_RegisterFunction: no backend compiled (enable LVM_WITH_LUA55)");
+    return -1;
+#endif
+}
+
+LVM_API int LVM_RegisterModule(void* opaque, const char* module_name,
+                                const char* const* func_names,
+                                const LVM_ExternalFunc* funcs, int count)
+{
+    if (!opaque) return -1;
+    auto* op = unwrap(opaque);
+
+    if (!module_name || !module_name[0]) {
+        op->error.set("LVM_RegisterModule: module_name is null or empty");
+        return -1;
+    }
+    if (!func_names || !funcs) {
+        op->error.set("LVM_RegisterModule: func_names or funcs is null");
+        return -1;
+    }
+    if (count <= 0) {
+        op->error.set("LVM_RegisterModule: count must be positive");
+        return -1;
+    }
+
+#if defined(LVM_HAS_LUA55) || defined(LVM_HAS_LUAJIT)
+    auto* L = static_cast<lua_State*>(op->native_handle);
+
+    // 创建模块表（栈顶）
+    lua_newtable(L);
+
+    for (int i = 0; i < count; ++i) {
+        if (!func_names[i] || !funcs[i]) {
+            op->error.set(std::string("LVM_RegisterModule: null func_name or func at index ")
+                          + std::to_string(i));
+            // 弹出已部分构造的模块表
+            lua_pop(L, 1);
+            return -1;
+        }
+
+        // 压入两个 upvalue：opaque 句柄 + 回调函数指针
+        lua_pushlightuserdata(L, opaque);
+        lua_pushlightuserdata(L, reinterpret_cast<void*>(
+            reinterpret_cast<uintptr_t>(funcs[i])));
+
+        // 创建 C 闭包
+        lua_pushcclosure(L, lvm_bridge_callback, 2);
+
+        // 模块表[func_name] = 闭包
+        lua_setfield(L, -2, func_names[i]);
+    }
+
+    // 将模块表设置为全局变量
+    lua_setglobal(L, module_name);
+
+    op->error.clear();
+    return 0;
+#elif defined(LVM_HAS_LUAU)
+    op->error.set("LVM_RegisterModule: not yet supported for Luau backend");
+    return -1;
+#else
+    op->error.set("LVM_RegisterModule: no backend compiled (enable LVM_WITH_LUA55)");
+    return -1;
+#endif
 }
 
 } /* extern "C" */

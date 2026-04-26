@@ -13,6 +13,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace LuaVM
@@ -33,6 +34,15 @@ namespace LuaVM
     }
 
     /// <summary>
+    /// 外部函数回调委托类型 —— 与 C ABI 的 LVM_ExternalFunc 对齐
+    /// 回调中通过 LuaVM 实例的 Public API 读取参数与压入返回值
+    /// </summary>
+    /// <param name="opaque">虚拟机不透明句柄</param>
+    /// <returns>压入栈中的返回值数量</returns>
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate int ExternalFuncDelegate(IntPtr opaque);
+
+    /// <summary>
     /// Lua 虚拟机封装类
     ///
     /// 设计要点:
@@ -49,6 +59,8 @@ namespace LuaVM
 
         private IntPtr _opaque;      // 不透明句柄（C++ 侧 OpaqueState*）
         private bool   _disposed;    // 释放标记
+        /// <summary>保持已注册回调的 GCHandle，防止委托被 GC 回收</summary>
+        private List<GCHandle> _registeredCallbacks;
 
         /* ====================================================================
          * P/Invoke 声明 —— 全部使用 Cdecl 调用约定，参数仅为 blittable 类型
@@ -141,6 +153,15 @@ namespace LuaVM
         [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
         private static extern void LVM_SetField(IntPtr opaque, int index, string key);
 
+        // ---- 外部函数注册 ----
+        [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int LVM_RegisterFunction(IntPtr opaque, string name, IntPtr func);
+
+        [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int LVM_RegisterModule(IntPtr opaque, string moduleName,
+            [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPStr)] string[] funcNames,
+            IntPtr funcPtrs, int count);
+
         /* ====================================================================
          * 构造函数与析构
          * ==================================================================== */
@@ -153,6 +174,7 @@ namespace LuaVM
         public LuaVM(LuaVMType type)
         {
             _opaque = LVM_Create((int)type);
+            _registeredCallbacks = new List<GCHandle>();
             if (_opaque == IntPtr.Zero)
             {
                 throw new InvalidOperationException(
@@ -171,6 +193,17 @@ namespace LuaVM
                 LVM_Destroy(_opaque);
                 _opaque = IntPtr.Zero;
                 _disposed = true;
+            }
+
+            // 释放已注册回调的 GCHandle，允许委托被 GC 回收
+            if (_registeredCallbacks != null)
+            {
+                foreach (var handle in _registeredCallbacks)
+                {
+                    if (handle.IsAllocated)
+                        handle.Free();
+                }
+                _registeredCallbacks.Clear();
             }
         }
 
@@ -475,6 +508,79 @@ namespace LuaVM
         {
             PushString(value);
             SetGlobal(name);
+        }
+
+        /* ====================================================================
+         * 公共方法 —— 外部函数注册
+         * ==================================================================== */
+
+        /// <summary>
+        /// 注册单个外部函数为 Lua 全局变量
+        /// </summary>
+        /// <param name="name">Lua 全局变量名</param>
+        /// <param name="func">回调委托</param>
+        /// <returns>0 = 成功，-1 = 失败（通过 GetLastError 获取详情）</returns>
+        /// <exception cref="ArgumentNullException">func 为 null 时抛出</exception>
+        public int RegisterFunction(string name, ExternalFuncDelegate func)
+        {
+            EnsureNotDisposed();
+            if (func == null)
+                throw new ArgumentNullException(nameof(func));
+
+            // 固定委托防止 GC 回收（委托在 Lua 虚拟机生命周期内需保持有效）
+            var handle = GCHandle.Alloc(func);
+            _registeredCallbacks.Add(handle);
+
+            IntPtr funcPtr = Marshal.GetFunctionPointerForDelegate(func);
+            return LVM_RegisterFunction(_opaque, name, funcPtr);
+        }
+
+        /// <summary>
+        /// 注册一批外部函数为一个 Lua 模块（表）
+        /// </summary>
+        /// <param name="moduleName">模块名称（Lua 全局变量名）</param>
+        /// <param name="funcNames">函数名称数组（模块表中的字段名）</param>
+        /// <param name="funcs">回调委托数组（与 funcNames 一一对应）</param>
+        /// <returns>0 = 成功，-1 = 失败</returns>
+        /// <exception cref="ArgumentException">参数数组长度不一致时抛出</exception>
+        public int RegisterModule(string moduleName, string[] funcNames, ExternalFuncDelegate[] funcs)
+        {
+            EnsureNotDisposed();
+            if (funcNames == null || funcs == null)
+                throw new ArgumentNullException(funcNames == null ? nameof(funcNames) : nameof(funcs));
+            if (funcNames.Length != funcs.Length)
+                throw new ArgumentException("funcNames and funcs must have the same length");
+            if (funcNames.Length == 0)
+                throw new ArgumentException("funcNames and funcs must not be empty");
+
+            int count = funcs.Length;
+            int ptrSize = IntPtr.Size;
+
+            // 固定所有委托并获取函数指针
+            IntPtr[] funcPtrs = new IntPtr[count];
+            for (int i = 0; i < count; i++)
+            {
+                if (funcs[i] == null)
+                    throw new ArgumentException($"funcs[{i}] is null");
+                _registeredCallbacks.Add(GCHandle.Alloc(funcs[i]));
+                funcPtrs[i] = Marshal.GetFunctionPointerForDelegate(funcs[i]);
+            }
+
+            // 分配非托管内存存放函数指针数组
+            IntPtr unmanagedArray = Marshal.AllocHGlobal(count * ptrSize);
+            try
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    Marshal.WriteIntPtr(unmanagedArray, i * ptrSize, funcPtrs[i]);
+                }
+
+                return LVM_RegisterModule(_opaque, moduleName, funcNames, unmanagedArray, count);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(unmanagedArray);
+            }
         }
     }
 }

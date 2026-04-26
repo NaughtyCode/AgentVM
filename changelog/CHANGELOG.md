@@ -1,5 +1,62 @@
 # Changelog
 
+## [1.3.0] - 2026-04-26
+
+### Added — External Function Registration API (Issue #3)
+
+#### New Public C ABI Types & Functions
+- `typedef int (*LVM_ExternalFunc)(void* opaque)` — callback type for user-registered external functions
+  - Callback receives `opaque` handle, reads arguments via Public API (`LVM_ToNumber`, `LVM_ToString`, etc.)
+  - Callback pushes return values via Public API (`LVM_PushNumber`, `LVM_PushString`, etc.)
+  - Return value = number of results pushed onto the stack
+- `LVM_RegisterFunction(void* opaque, const char* name, LVM_ExternalFunc func)` — register a single C function as a Lua global variable
+  - Returns `0` on success, `-1` on error (null name, null func, no backend)
+  - Registered function can be called from Lua by `name`
+- `LVM_RegisterModule(void* opaque, const char* module_name, const char* const* func_names, const LVM_ExternalFunc* funcs, int count)` — register a batch of C functions as a Lua module table
+  - Creates a table with `func_names[i]` → `funcs[i]` mappings
+  - Sets the table as a global with name `module_name`
+  - Functions accessible from Lua as `module_name.func_name()`
+
+#### Implementation Design
+- **Bridge function pattern**: A single static C function (`lvm_bridge_callback`) serves as the entry point for all registered external functions
+  - Uses Lua upvalue mechanism: stores `opaque` handle and callback pointer as two light userdata upvalues
+  - Creates a C closure via `lua_pushcclosure` binding the bridge function with the upvalues
+  - Bridge function extracts upvalues, calls user callback, returns result count to Lua
+- **Lifetime management**: Registered callbacks live as Lua closures within the VM state; automatically freed when the Lua state is destroyed
+- **Platform safety**: Function pointers stored via `uintptr_t` → `void*` conversion (safe on all modern 32/64-bit platforms)
+- **Conditional compilation**: Lua C API access (`lua.h`, `lauxlib.h`) conditional on `LVM_HAS_LUA55` / `LVM_HAS_LUAJIT`
+- **Luau note**: Luau backend returns clear error message for unimplemented registration support
+
+#### C# Integration
+- `ExternalFuncDelegate(IntPtr opaque)` — delegate type matching `LVM_ExternalFunc`, with `[UnmanagedFunctionPointer(CallingConvention.Cdecl)]`
+- `LuaVM.RegisterFunction(string name, ExternalFuncDelegate func)` — wraps `LVM_RegisterFunction`
+  - Uses `GCHandle.Alloc` to prevent delegate garbage collection during VM lifetime
+  - Frees all handles in `Dispose()`
+- `LuaVM.RegisterModule(string moduleName, string[] funcNames, ExternalFuncDelegate[] funcs)` — wraps `LVM_RegisterModule`
+  - Validates array length consistency, non-null delegates
+  - Allocates unmanaged memory for function pointer array (`Marshal.AllocHGlobal`)
+  - Safe cleanup via `try/finally` with `Marshal.FreeHGlobal`
+
+#### Test Coverage (5 new tests)
+- `register_global_function` — register `my_add(a,b)`, verify Lua calls return correct sum
+- `register_function_with_string` — register `greet(name)`, verify string argument/return handling
+- `register_module` — register `math_ext` module with `multiply`, `get_pi`, `get_version` functions, verify all three from Lua
+- `register_null_handling` — verify null name/func returns `-1`, null func_names returns `-1`, count=0 returns `-1`
+- `register_global_function_to_null` — verify null opaque returns `-1` without crashing
+
+#### Fix During Implementation
+- **Lua header linkage on MSVC**: `lua.h` does not contain `extern "C"` guards. Lua headers must be included inside `extern "C" { }` block when compiling as C++ to prevent C++ name mangling of Lua function symbols. This matches the existing pattern in `lvm_backend_lua55.cpp`.
+
+#### Files Modified
+- `src/include/lvm_api.h` — added `LVM_ExternalFunc` typedef, `LVM_RegisterFunction`, `LVM_RegisterModule` declarations
+- `src/lvm/lvm_api.cpp` — added conditional Lua header include, `lvm_bridge_callback` bridge function, registration implementations
+- `csharp/LuaVM/LuaVM.cs` — added `ExternalFuncDelegate`, P/Invoke declarations, callback lifetime management, `RegisterFunction`/`RegisterModule` methods
+- `tests/test_main.cpp` — added 5 test callbacks and 5 test cases
+- `changelog/CHANGELOG.md` — this entry
+
+#### Test Results
+- Windows: 34/34 passing (MSVC 19.51)
+
 ## [1.2.0] - 2026-04-26
 
 ### Changed — Cross-Platform Compatibility Audit & Fix (Issue #2)

@@ -209,6 +209,43 @@ LVM_API void   LVM_GetField(void* opaque, int index, const char* key);
  */
 LVM_API void   LVM_SetField(void* opaque, int index, const char* key);
 
+/* --------------------------------------------------------------------------
+ * 外部函数注册 —— 将 C/C++ 函数注册为 Lua 全局函数或模块
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief 外部函数回调类型
+ * @param opaque  虚拟机句柄（回调中通过 Public API 读取参数、压入返回值）
+ * @return 压入栈中的返回值数量（0 = 无返回值，非零 = 返回值数量）
+ * @note  回调通过 LVM_ToNumber / LVM_ToString 等读取 Lua 传入的参数（栈索引 1..N）
+ *        回调通过 LVM_PushNumber / LVM_PushString 等压入返回值至栈顶
+ *        返回值应当与压入的返回值数量一致
+ */
+typedef int (*LVM_ExternalFunc)(void* opaque);
+
+/**
+ * @brief 注册单个外部函数为 Lua 全局变量
+ * @param opaque  虚拟机句柄
+ * @param name    Lua 全局变量名（即 Lua 中调用此函数的名字）
+ * @param func    回调函数指针
+ * @return 0 = 成功，-1 = 失败（通过 LVM_GetLastError 获取详情）
+ */
+LVM_API int LVM_RegisterFunction(void* opaque, const char* name, LVM_ExternalFunc func);
+
+/**
+ * @brief 注册一批外部函数为一个 Lua 模块表
+ * @param opaque       虚拟机句柄
+ * @param module_name  模块名称（Lua 全局变量名，其值为一个表）
+ * @param func_names   函数名称数组（模块表中各函数的字段名）
+ * @param funcs        回调函数指针数组（与 func_names 一一对应）
+ * @param count        函数数量
+ * @return 0 = 成功，-1 = 失败
+ * @note  调用后在 Lua 中可通过 module_name.func_names[i]() 调用对应函数
+ */
+LVM_API int LVM_RegisterModule(void* opaque, const char* module_name,
+                                const char* const* func_names,
+                                const LVM_ExternalFunc* funcs, int count);
+
 #ifdef __cplusplus
 }
 #endif

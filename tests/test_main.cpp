@@ -19,6 +19,49 @@
 #include <cstring>
 #include <cmath>
 #include <cstdlib>
+#include <string>
+
+/* ==========================================================================
+ * 外部函数注册 —— 测试用回调函数
+ * ========================================================================== */
+
+/** @brief 回调：两数相加 (arg1 + arg2) */
+static int test_add_callback(void* opaque) {
+    double a = LVM_ToNumber(opaque, 1);
+    double b = LVM_ToNumber(opaque, 2);
+    LVM_PushNumber(opaque, a + b);
+    return 1;
+}
+
+/** @brief 回调：生成问候语 ("Hello, " .. name .. "!") */
+static int test_greet_callback(void* opaque) {
+    const char* name = LVM_ToString(opaque, 1);
+    std::string greeting = std::string("Hello, ") + (name ? name : "nil") + "!";
+    LVM_PushString(opaque, greeting.c_str());
+    return 1;
+}
+
+/** @brief 回调：两数相乘 (arg1 * arg2) — 用于模块测试 */
+static int test_multiply_callback(void* opaque) {
+    double a = LVM_ToNumber(opaque, 1);
+    double b = LVM_ToNumber(opaque, 2);
+    LVM_PushNumber(opaque, a * b);
+    return 1;
+}
+
+/** @brief 回调：返回圆周率常数 — 用于模块测试 */
+static int test_getpi_callback(void* opaque) {
+    (void)opaque;  // 无参数
+    LVM_PushNumber(opaque, 3.1415926);
+    return 1;
+}
+
+/** @brief 回调：返回字符串常数 — 用于模块测试 */
+static int test_getversion_callback(void* opaque) {
+    (void)opaque;
+    LVM_PushString(opaque, "1.0.0-test");
+    return 1;
+}
 
 /* ==========================================================================
  * 轻量级测试框架
@@ -619,6 +662,129 @@ TEST(batch_load_nonexistent_dir) {
         "Error should be set for nonexistent directory");
 
     LVM_Destroy(vm);
+}
+
+/* ==========================================================================
+ * 测试：外部函数注册
+ * ========================================================================== */
+
+TEST(register_global_function) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    // 注册 add 函数为全局变量 "my_add"
+    int result = LVM_RegisterFunction(vm, "my_add", test_add_callback);
+    TEST_ASSERT(result == 0, "RegisterFunction should return 0 on success");
+
+    // 从 Lua 调用 my_add(10, 20)
+    result = LVM_ExecuteString(vm, "sum = my_add(10, 20)");
+    TEST_ASSERT(result == 0, "Calling registered function should succeed");
+
+    // 验证结果: 10 + 20 = 30
+    LVM_GetGlobal(vm, "sum");
+    TEST_ASSERT(LVM_IsNumber(vm, 1), "sum should be a number");
+    double sum = LVM_ToNumber(vm, 1);
+    TEST_ASSERT(std::fabs(sum - 30.0) < 0.0001, "10 + 20 should be 30");
+
+    LVM_Destroy(vm);
+}
+
+TEST(register_function_with_string) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    // 注册 greet 函数
+    int result = LVM_RegisterFunction(vm, "greet", test_greet_callback);
+    TEST_ASSERT(result == 0, "RegisterFunction(greet) should succeed");
+
+    // 从 Lua 调用 greet("World")
+    result = LVM_ExecuteString(vm, "msg = greet('World')");
+    TEST_ASSERT(result == 0, "Calling greet should succeed");
+
+    // 验证返回值
+    LVM_GetGlobal(vm, "msg");
+    TEST_ASSERT(LVM_IsString(vm, 1), "msg should be a string");
+    const char* msg = LVM_ToString(vm, 1);
+    TEST_ASSERT(std::strcmp(msg, "Hello, World!") == 0,
+        "greet('World') should return 'Hello, World!'");
+
+    LVM_Destroy(vm);
+}
+
+TEST(register_module) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    // 注册 math_ext 模块（包含 multiply, get_pi, get_version 三个函数）
+    const char* names[] = { "multiply", "get_pi", "get_version" };
+    LVM_ExternalFunc funcs[] = {
+        test_multiply_callback,
+        test_getpi_callback,
+        test_getversion_callback
+    };
+
+    int result = LVM_RegisterModule(vm, "math_ext", names, funcs, 3);
+    TEST_ASSERT(result == 0, "RegisterModule should return 0");
+
+    // 调用 math_ext.multiply(6, 7) → 42
+    result = LVM_ExecuteString(vm, "x = math_ext.multiply(6, 7)");
+    TEST_ASSERT(result == 0, "module multiply call should succeed");
+    LVM_GetGlobal(vm, "x");
+    double x = LVM_ToNumber(vm, 1);
+    TEST_ASSERT(std::fabs(x - 42.0) < 0.0001, "6 * 7 should be 42");
+    LVM_SetTop(vm, 0);
+
+    // 调用 math_ext.get_pi() → 3.14159...
+    result = LVM_ExecuteString(vm, "pi = math_ext.get_pi()");
+    TEST_ASSERT(result == 0, "module get_pi call should succeed");
+    LVM_GetGlobal(vm, "pi");
+    double pi = LVM_ToNumber(vm, 1);
+    TEST_ASSERT(std::fabs(pi - 3.1415926) < 0.0001, "pi should be ~3.14159");
+    LVM_SetTop(vm, 0);
+
+    // 调用 math_ext.get_version() → "1.0.0-test"
+    result = LVM_ExecuteString(vm, "v = math_ext.get_version()");
+    TEST_ASSERT(result == 0, "module get_version call should succeed");
+    LVM_GetGlobal(vm, "v");
+    TEST_ASSERT(LVM_IsString(vm, 1), "version should be a string");
+    const char* v = LVM_ToString(vm, 1);
+    TEST_ASSERT(std::strcmp(v, "1.0.0-test") == 0,
+        "get_version should return '1.0.0-test'");
+
+    LVM_Destroy(vm);
+}
+
+TEST(register_null_handling) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    // 注册时 name 为 null → 返回 -1
+    int result = LVM_RegisterFunction(vm, nullptr, test_add_callback);
+    TEST_ASSERT(result == -1, "Null name should return -1");
+
+    // 注册时 func 为 null → 返回 -1
+    result = LVM_RegisterFunction(vm, "test_func", nullptr);
+    TEST_ASSERT(result == -1, "Null func should return -1");
+
+    // 注册模块时 func_names 为 null → 返回 -1
+    LVM_ExternalFunc dummy[] = { test_add_callback };
+    result = LVM_RegisterModule(vm, "mod", nullptr, dummy, 1);
+    TEST_ASSERT(result == -1, "Null func_names should return -1");
+
+    // 注册模块时 count 为 0 → 返回 -1
+    result = LVM_RegisterModule(vm, "mod", nullptr, nullptr, 0);
+    TEST_ASSERT(result == -1, "Count=0 should return -1");
+
+    LVM_Destroy(vm);
+}
+
+TEST(register_global_function_to_null) {
+    // 传入 null opaque → 返回 -1 （不崩溃）
+    int result = LVM_RegisterFunction(nullptr, "test", test_add_callback);
+    TEST_ASSERT(result == -1, "Null opaque should return -1");
+
+    result = LVM_RegisterModule(nullptr, "mod", nullptr, nullptr, 1);
+    TEST_ASSERT(result == -1, "Null opaque for module should return -1");
 }
 
 /* ==========================================================================
