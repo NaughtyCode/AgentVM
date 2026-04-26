@@ -73,6 +73,14 @@ namespace LuaVM
         [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
         private static extern int LVM_ExecuteFile(IntPtr opaque, string filepath);
 
+        // ---- 批量脚本加载 ----
+        [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int LVM_LoadScriptFiles(IntPtr opaque, string dirpath, string suffix);
+
+        [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int LVM_LoadScriptFilesEx(IntPtr opaque, string dirpath,
+            string suffix, IntPtr[] blacklist, int blacklist_len);
+
         // ---- 栈操作 ----
         [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
         private static extern int LVM_GetTop(IntPtr opaque);
@@ -199,6 +207,58 @@ namespace LuaVM
         {
             EnsureNotDisposed();
             return LVM_ExecuteFile(_opaque, filepath);
+        }
+
+        /// <summary>
+        /// 从指定目录加载所有匹配后缀的 Lua 脚本文件
+        /// </summary>
+        /// <param name="directory">目标目录路径</param>
+        /// <param name="suffix">文件后缀（如 ".lua"），传 null 默认为 ".lua"</param>
+        /// <returns>成功加载并执行的文件数量</returns>
+        public int LoadScriptFiles(string directory, string suffix = null)
+        {
+            EnsureNotDisposed();
+            return LVM_LoadScriptFiles(_opaque, directory, suffix ?? ".lua");
+        }
+
+        /// <summary>
+        /// 从指定目录加载匹配后缀的脚本文件（支持黑名单过滤）
+        /// </summary>
+        /// <param name="directory">目标目录路径</param>
+        /// <param name="suffix">文件后缀（如 ".lua"），传 null 默认为 ".lua"</param>
+        /// <param name="blacklist">需要排除的文件名列表（不含路径，含后缀）</param>
+        /// <returns>成功加载并执行的文件数量</returns>
+        public int LoadScriptFiles(string directory, string suffix, string[] blacklist)
+        {
+            EnsureNotDisposed();
+
+            if (blacklist == null || blacklist.Length == 0)
+            {
+                // 无黑名单，走快速路径
+                return LVM_LoadScriptFiles(_opaque, directory, suffix ?? ".lua");
+            }
+
+            // 将 C# string[] 转换为 IntPtr[]（非托管 C 字符串数组）
+            IntPtr[] blacklistPtrs = new IntPtr[blacklist.Length];
+            try
+            {
+                for (int i = 0; i < blacklist.Length; i++)
+                {
+                    blacklistPtrs[i] = Marshal.StringToHGlobalAnsi(blacklist[i]);
+                }
+
+                return LVM_LoadScriptFilesEx(_opaque, directory,
+                    suffix ?? ".lua", blacklistPtrs, blacklist.Length);
+            }
+            finally
+            {
+                // 释放非托管内存
+                for (int i = 0; i < blacklistPtrs.Length; i++)
+                {
+                    if (blacklistPtrs[i] != IntPtr.Zero)
+                        Marshal.FreeHGlobal(blacklistPtrs[i]);
+                }
+            }
         }
 
         /// <summary>

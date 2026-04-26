@@ -82,6 +82,35 @@ LVM_API int   LVM_ExecuteString(void* opaque, const char* code);
 LVM_API int   LVM_ExecuteFile(void* opaque, const char* filepath);
 
 /* --------------------------------------------------------------------------
+ * 批量脚本加载 —— 从指定目录加载脚本文件
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief 从指定目录加载所有匹配后缀的 Lua 脚本文件
+ * @param opaque   虚拟机句柄
+ * @param dirpath  目标目录路径
+ * @param suffix   文件后缀过滤器（如 ".lua"），传 nullptr 默认为 ".lua"
+ * @return 成功加载的文件数量（>= 0），失败返回 -1
+ * @note  文件按文件名排序后依次执行；单个文件执行失败不中断后续文件加载
+ * @note  错误信息通过 LVM_GetLastError 获取（最后失败的文件的错误）
+ */
+LVM_API int   LVM_LoadScriptFiles(void* opaque, const char* dirpath, const char* suffix);
+
+/**
+ * @brief 从指定目录加载匹配后缀的 Lua 脚本文件（带黑名单过滤）
+ * @param opaque         虚拟机句柄
+ * @param dirpath        目标目录路径
+ * @param suffix         文件后缀过滤器，传 nullptr 默认为 ".lua"
+ * @param blacklist      需要排除的文件名数组（仅匹配文件名，不含路径）
+ * @param blacklist_len  黑名单数组长度
+ * @return 成功加载的文件数量（>= 0），失败返回 -1
+ * @note  黑名单中的文件名将被跳过，支持精确匹配（含后缀）
+ * @note  若 blacklist 为 nullptr 或 blacklist_len 为 0，行为等同于 LVM_LoadScriptFiles
+ */
+LVM_API int   LVM_LoadScriptFilesEx(void* opaque, const char* dirpath, const char* suffix,
+                                     const char* const* blacklist, int blacklist_len);
+
+/* --------------------------------------------------------------------------
  * 栈操作 —— 数值直接返回，无需解析 IntPtr
  * -------------------------------------------------------------------------- */
 

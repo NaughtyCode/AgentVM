@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.1.0] - 2026-04-26
+
+### Added — Batch Script Loading API (Issue #1)
+
+#### New Public C ABI Functions
+- `LVM_LoadScriptFiles(void* opaque, const char* dirpath, const char* suffix)` -- Load all matching scripts from a directory
+  - `suffix` defaults to `".lua"` when passed as `nullptr`
+  - Files sorted by name before execution
+  - Returns count of successfully loaded files, `-1` on directory error
+  - Single file failure does not interrupt remaining files
+- `LVM_LoadScriptFilesEx(void* opaque, const char* dirpath, const char* suffix, const char* const* blacklist, int blacklist_len)` -- Batch load with blacklist filtering
+  - Blacklist matches filenames (without path) against an exclusion list
+  - If `blacklist` is `nullptr` or `blacklist_len` is 0, behavior is identical to `LVM_LoadScriptFiles`
+
+#### C# Integration
+- `LuaVM.LoadScriptFiles(string directory, string suffix = ".lua")` -- wraps `LVM_LoadScriptFiles`
+- `LuaVM.LoadScriptFiles(string directory, string suffix, string[] blacklist)` -- wraps `LVM_LoadScriptFilesEx` with safe `IntPtr` marshaling
+  - Automatically handles `Marshal.StringToHGlobalAnsi` / `Marshal.FreeHGlobal`
+
+#### Implementation Details
+- C++17 `<filesystem>` for cross-platform directory traversal
+- `<algorithm>` for file sorting
+- `is_blacklisted()` helper for O(n) filename matching
+- `suffix_matches()` helper for suffix comparison
+- Error handling: individual file errors recorded via `LVM_GetLastError` but do not abort batch loading
+
+#### Test Coverage (6 new tests)
+- `batch_load_basic` -- load all `.lua` files, verify global variables set by each
+- `batch_load_custom_suffix` -- load only `.lualib` files, verify `.lua` files excluded
+- `batch_load_default_suffix` -- verify `nullptr` suffix defaults to `.lua`
+- `batch_load_blacklist` -- exclude single file via blacklist
+- `batch_load_blacklist_multiple` -- exclude multiple files via blacklist
+- `batch_load_nonexistent_dir` -- verify `-1` return and error on invalid directory
+
+#### Files Modified
+- `src/include/lvm_api.h` -- added 2 new function declarations
+- `src/lvm/lvm_api.cpp` -- added implementation (~100 lines) with `<filesystem>`, `<algorithm>`, `<vector>`
+- `csharp/LuaVM/LuaVM.cs` -- added P/Invoke declarations and 2 public methods
+- `src/CMakeLists.txt` -- added `TEST_SCRIPTS_DIR` compile definition
+- `tests/test_main.cpp` -- added 6 test cases
+- `tests/scripts/` -- 6 test Lua scripts (init.lua, test1-3.lua, helper.lualib, skip_me.lua)
+
 ## [1.0.0] - 2026-04-26
 
 ### Added

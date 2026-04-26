@@ -1,0 +1,2 @@
+-- helper.lua: helper functions (not .lua suffix - for suffix filter testing)
+helper_executed = true

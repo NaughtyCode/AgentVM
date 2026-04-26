@@ -8,5 +8,6 @@ claude --dangerously-skip-permissions
 --------------------- Begin of Task --------------------------
 
 0. 根据 ./doc/main_paln.txt 的信息生成完整的工程
+1. 按 ./doc/issues/issue1.txt 要求执行任务
 
 --------------------- End of Task --------------------------

@@ -474,6 +474,154 @@ TEST(multiple_instances) {
 }
 
 /* ==========================================================================
+ * 测试：批量脚本加载
+ * ========================================================================== */
+
+/** @brief 使用编译时定义的脚本目录路径 */
+#ifndef TEST_SCRIPTS_DIR
+#define TEST_SCRIPTS_DIR "./tests/scripts"
+#endif
+
+TEST(batch_load_basic) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 从默认脚本目录加载所有 .lua 文件
+     * 应加载: init.lua, test1.lua, test2.lua, test3.lua, skip_me.lua (共 5 个)
+     * 不应加载: helper.lualib (后缀不匹配) */
+    int count = LVM_LoadScriptFiles(vm, TEST_SCRIPTS_DIR, ".lua");
+    TEST_ASSERT(count >= 3, "Should load at least 3 .lua files");
+
+    /* 验证各脚本设置的全局变量 */
+    LVM_GetGlobal(vm, "test1_executed");
+    TEST_ASSERT(LVM_IsBoolean(vm, 1), "test1_executed should exist");
+    LVM_SetTop(vm, 0);
+
+    LVM_GetGlobal(vm, "test1_value");
+    TEST_ASSERT(std::fabs(LVM_ToNumber(vm, 1) - 100.0) < 0.0001,
+        "test1_value should be 100");
+    LVM_SetTop(vm, 0);
+
+    LVM_GetGlobal(vm, "test2_executed");
+    TEST_ASSERT(LVM_IsBoolean(vm, 1), "test2_executed should exist");
+    LVM_SetTop(vm, 0);
+
+    LVM_GetGlobal(vm, "init_executed");
+    TEST_ASSERT(LVM_IsBoolean(vm, 1), "init_executed should exist");
+    LVM_SetTop(vm, 0);
+
+    LVM_Destroy(vm);
+}
+
+TEST(batch_load_custom_suffix) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 加载 .lualib 后缀的文件 —— 应只加载 helper.lualib */
+    int count = LVM_LoadScriptFiles(vm, TEST_SCRIPTS_DIR, ".lualib");
+    TEST_ASSERT(count >= 1, "Should load at least 1 .lualib file");
+
+    LVM_GetGlobal(vm, "helper_executed");
+    TEST_ASSERT(LVM_IsBoolean(vm, 1), "helper_executed should exist");
+    LVM_SetTop(vm, 0);
+
+    /* .lua 文件不应该被加载 */
+    LVM_GetGlobal(vm, "test1_executed");
+    TEST_ASSERT(LVM_IsNil(vm, 1),
+        "test1_executed should not exist when loading .lualib");
+    LVM_SetTop(vm, 0);
+
+    LVM_Destroy(vm);
+}
+
+TEST(batch_load_default_suffix) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* suffix 传 nullptr，应默认为 ".lua" */
+    int count = LVM_LoadScriptFiles(vm, TEST_SCRIPTS_DIR, nullptr);
+    TEST_ASSERT(count >= 3, "Default suffix should load at least 3 .lua files");
+
+    LVM_GetGlobal(vm, "test1_executed");
+    TEST_ASSERT(LVM_IsBoolean(vm, 1),
+        "test1_executed should exist with default suffix");
+
+    LVM_Destroy(vm);
+}
+
+TEST(batch_load_blacklist) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 黑名单排除 skip_me.lua */
+    const char* blacklist[] = { "skip_me.lua" };
+
+    int count = LVM_LoadScriptFilesEx(vm, TEST_SCRIPTS_DIR, ".lua",
+        blacklist, 1);
+    TEST_ASSERT(count >= 3, "Should load scripts except blacklisted ones");
+
+    /* 黑名单中的文件不应被执行 */
+    LVM_GetGlobal(vm, "skipped");
+    TEST_ASSERT(LVM_IsNil(vm, 1),
+        "blacklisted skip_me.lua should not have been executed");
+    LVM_SetTop(vm, 0);
+
+    /* 其他文件仍应被加载 */
+    LVM_GetGlobal(vm, "test1_executed");
+    TEST_ASSERT(LVM_IsBoolean(vm, 1),
+        "test1_executed should exist (not blacklisted)");
+
+    LVM_Destroy(vm);
+}
+
+TEST(batch_load_blacklist_multiple) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 黑名单排除多个文件 */
+    const char* blacklist[] = { "skip_me.lua", "init.lua", "test3.lua" };
+
+    int count = LVM_LoadScriptFilesEx(vm, TEST_SCRIPTS_DIR, ".lua",
+        blacklist, 3);
+    TEST_ASSERT(count >= 2, "Should load non-blacklisted files");
+
+    /* 被排除的文件不应执行 */
+    LVM_GetGlobal(vm, "skipped");
+    TEST_ASSERT(LVM_IsNil(vm, 1), "skip_me.lua should not execute");
+    LVM_SetTop(vm, 0);
+
+    LVM_GetGlobal(vm, "init_executed");
+    TEST_ASSERT(LVM_IsNil(vm, 1), "init.lua should not execute");
+    LVM_SetTop(vm, 0);
+
+    LVM_GetGlobal(vm, "test3_executed");
+    TEST_ASSERT(LVM_IsNil(vm, 1), "test3.lua should not execute");
+    LVM_SetTop(vm, 0);
+
+    /* test1.lua 仍在白名单中 */
+    LVM_GetGlobal(vm, "test1_executed");
+    TEST_ASSERT(LVM_IsBoolean(vm, 1),
+        "test1.lua should still execute (not in blacklist)");
+
+    LVM_Destroy(vm);
+}
+
+TEST(batch_load_nonexistent_dir) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 加载不存在的目录应返回 -1 */
+    int count = LVM_LoadScriptFiles(vm, "/nonexistent/path/scripts", ".lua");
+    TEST_ASSERT(count == -1, "Nonexistent directory should return -1");
+
+    const char* err = LVM_GetLastError(vm);
+    TEST_ASSERT(err != nullptr && std::strlen(err) > 0,
+        "Error should be set for nonexistent directory");
+
+    LVM_Destroy(vm);
+}
+
+/* ==========================================================================
  * Main
  * ========================================================================== */
 

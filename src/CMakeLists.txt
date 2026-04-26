@@ -295,6 +295,11 @@ if(LVM_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
 
+    # 将测试脚本目录作为编译宏传递给测试程序
+    target_compile_definitions(test_lvm PRIVATE
+        TEST_SCRIPTS_DIR="${CMAKE_SOURCE_DIR}/../tests/scripts"
+    )
+
     target_link_libraries(test_lvm PRIVATE AIPixelVM)
 
     if(MSVC)
