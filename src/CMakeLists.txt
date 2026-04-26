@@ -183,9 +183,13 @@ if(LVM_WITH_LUAJIT)
 
     if(DEFINED LUAJIT_SOURCE_DIR)
         # LuaJIT 使用自己的 Makefile 系统，CMake 集成较复杂
-        # 此处使用预编译的 lua51.lib 或手动编译
+        # 此处使用预编译的库或手动编译
         message(STATUS "  LuaJIT source: ${LUAJIT_SOURCE_DIR}")
-        message(STATUS "  LuaJIT requires manual build. Run: cd ${LUAJIT_SOURCE_DIR} && make")
+        if(LVM_PLATFORM_WINDOWS)
+            message(STATUS "  LuaJIT requires manual build. Run: cd ${LUAJIT_SOURCE_DIR}/src && msvcbuild.bat")
+        else()
+            message(STATUS "  LuaJIT requires manual build. Run: cd ${LUAJIT_SOURCE_DIR} && make")
+        endif()
     endif()
 endif()
 
@@ -213,7 +217,11 @@ if(LVM_WITH_LUAU)
 
     if(DEFINED LUAU_SOURCE_DIR)
         message(STATUS "  Luau source: ${LUAU_SOURCE_DIR}")
-        message(STATUS "  Luau requires CMake build. Run: cd ${LUAU_SOURCE_DIR} && cmake -B build")
+        if(LVM_PLATFORM_WINDOWS)
+            message(STATUS "  Luau requires CMake build. Run: cmake -S ${LUAU_SOURCE_DIR} -B ${LUAU_SOURCE_DIR}/build")
+        else()
+            message(STATUS "  Luau requires CMake build. Run: cmake -S ${LUAU_SOURCE_DIR} -B ${LUAU_SOURCE_DIR}/build -DCMAKE_BUILD_TYPE=Release")
+        endif()
     endif()
 endif()
 
@@ -256,9 +264,17 @@ endif()
 if(LVM_PLATFORM_WINDOWS)
     target_compile_definitions(AIPixelVM PRIVATE LVM_EXPORTS _CRT_SECURE_NO_WARNINGS)
 
-    # 导出所有 extern "C" 符号
+    # 导出所有 extern "C" 符号 (Windows)
     set_target_properties(AIPixelVM PROPERTIES
         WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+else()
+    # 非 Windows (Linux / macOS): 隐藏所有内部符号，仅 LVM_API 标记的函数可见
+    # lvm_api.h 中 LVM_API 宏已定义为 __attribute__((visibility("default")))
+    set_target_properties(AIPixelVM PROPERTIES
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        C_VISIBILITY_PRESET hidden
     )
 endif()
 
@@ -266,6 +282,9 @@ endif()
 if(MSVC)
     target_compile_options(AIPixelVM PRIVATE /W3 /utf-8)
     target_compile_options(lua55 PRIVATE /utf-8)
+else()
+    # GCC / Clang: 合理的警告级别
+    target_compile_options(AIPixelVM PRIVATE -Wall -Wextra)
 endif()
 
 # ---- 安装规则 ----
@@ -304,6 +323,8 @@ if(LVM_BUILD_TESTS)
 
     if(MSVC)
         target_compile_options(test_lvm PRIVATE /W3 /utf-8)
+    else()
+        target_compile_options(test_lvm PRIVATE -Wall -Wextra)
     endif()
 
     # 添加 CTest 测试

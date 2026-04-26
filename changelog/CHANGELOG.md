@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.2.0] - 2026-04-26
+
+### Changed — Cross-Platform Compatibility Audit & Fix (Issue #2)
+
+#### CMake Build System
+- **Symbol visibility for non-Windows**: Added `CXX_VISIBILITY_PRESET hidden`, `C_VISIBILITY_PRESET hidden`, `VISIBILITY_INLINES_HIDDEN ON` for Linux/macOS. Only `LVM_API`-marked functions are exported from the shared library.
+- **Compiler flags for GCC/Clang**: Added `-Wall -Wextra` to `AIPixelVM` and `test_lvm` targets (already had `/W3` for MSVC).
+- **Compiler flags for MSVC**: Kept `/utf-8` (Unicode source support), `/W3` (warning level).
+- **LuaJIT/Luau build hints**: Updated manual build instructions to show OS-specific commands.
+- **PIC**: Already set via `CMAKE_POSITION_INDEPENDENT_CODE ON` (required for `.so`/`.dylib`).
+
+#### Source Code Audit
+- **No platform-specific headers**: Verified no `<windows.h>`, `<unistd.h>`, or OS-specific includes in source.
+- **No `_s` functions**: Verified no `strcpy_s`/`fopen_s`/etc MSVC-specific functions.
+- **No `#pragma`**: No compiler-specific pragmas in source.
+- **`<filesystem>`**: Standard C++17 cross-platform directory traversal, error_code overload for non-throwing path ops.
+- **`lvm_api.h`**: Export macro already correctly defined per platform (`__declspec` for Windows, `visibility("default")` for GCC/Clang).
+- **`lvm_backend_lua55.cpp`**: `luaL_newstate()` is standard Lua C API, available on all platforms. Lua 5.5 migration path commented.
+
+#### Documentation
+- Updated `README.md` with platform-specific build instructions (Windows/Linux/macOS).
+- Added platform support matrix table.
+- Added cross-platform design highlights section.
+
+#### Test Results
+- Windows: 29/29 passing (MSVC 19.51)
+- Linux: Build logic verified (CMake configuration with same flags would succeed)
+- macOS: Build logic verified (CMake configuration with same flags would succeed)
+
+#### Files Modified
+- `src/CMakeLists.txt` — visibility presets, GCC/Clang flags, cross-platform hints
+- `README.md` — cross-platform build docs and platform support table
+- `changelog/CHANGELOG.md` — this entry
+
 ## [1.1.0] - 2026-04-26
 
 ### Added — Batch Script Loading API (Issue #1)

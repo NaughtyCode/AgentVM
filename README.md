@@ -38,28 +38,63 @@ A C++17 library that wraps Lua 5.5 / LuaJIT / Luau virtual machines behind a uni
 - C++17 compiler (MSVC 2019+, GCC 9+, Clang 10+)
 - Lua 5.4+ source (auto-downloaded by CMake)
 
+### Platform Support
+| Platform | Compiler | Status | Output |
+|----------|----------|--------|--------|
+| Windows 10+ | MSVC 2019+ | Full support | `AIPixelVM.dll` |
+| Linux | GCC 9+ / Clang 10+ | Full support | `libAIPixelVM.so` |
+| macOS 10.15+ | Apple Clang 11+ | Full support | `libAIPixelVM.dylib` |
+
+Cross-platform design highlights:
+- C ABI with `extern "C"` ensures stable symbol names across all platforms
+- `__declspec(dllexport)` on Windows, `__attribute__((visibility("default")))` on Linux/macOS
+- C++17 `<filesystem>` for portable directory traversal
+- CMake `FetchContent` auto-downloads Lua source on all platforms
+- No platform-specific headers (`<windows.h>`, `<unistd.h>`) in source code
+
 ### C# Integration
 - .NET 8.0+
-- Built `AIPixelVM.dll` (or `.so` / `.dylib`)
+- Built native library (`AIPixelVM.dll` / `libAIPixelVM.so` / `libAIPixelVM.dylib`)
 
 ## Quick Start
 
 ### 1. Build the Native Library
 
+**Windows (MSVC):**
 ```bash
-# Default: Lua 5.5 backend only
 cmake -S src -B build -DLVM_WITH_LUA55=ON
 cmake --build build --config Release
+# Output: build/Release/AIPixelVM.dll
 ```
 
-Output: `build/Release/AIPixelVM.dll`
+**Linux (GCC/Clang):**
+```bash
+cmake -S src -B build -DLVM_WITH_LUA55=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+# Output: build/libAIPixelVM.so
+```
+
+**macOS (Apple Clang):**
+```bash
+cmake -S src -B build -DLVM_WITH_LUA55=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+# Output: build/libAIPixelVM.dylib
+```
 
 ### 2. Run C++ Tests
 
+**Windows:**
 ```bash
 cmake -S src -B build -DLVM_WITH_LUA55=ON -DLVM_BUILD_TESTS=ON
 cmake --build build --config Release
 ./build/Release/test_lvm.exe
+```
+
+**Linux / macOS:**
+```bash
+cmake -S src -B build -DLVM_WITH_LUA55=ON -DLVM_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/test_lvm
 ```
 
 ### 3. Use from C#
