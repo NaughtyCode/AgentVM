@@ -150,6 +150,7 @@ class Program
 
         vm.GetField(1, "y");
         Console.WriteLine($"  t.y = {vm.GetNumber(2)}");
+        vm.SetTop(1);  // 弹出 y 的值，栈中仅保留表
 
         // 将表赋值给全局变量
         vm.SetGlobal("point");

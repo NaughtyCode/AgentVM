@@ -1,5 +1,57 @@
 # Changelog
 
+## [1.4.0] - 2026-04-27
+
+### Added — AOT Support (Issue #4)
+
+#### Core Feature: AOT-Compatible Native Library Loading
+- **AIPixelVM 抽象基类** (`csharp/LuaVM/AIPixelVM.cs`) — 提供 AOT 兼容的原生库加载机制
+  - 使用 `NativeLibrary.SetDllImportResolver` 注册自定义库解析器，在 Native AOT 发布后仍能正确解析原生库
+  - 按 .NET RID 约定自动搜索原生库路径: `runtimes/{win|linux|osx}-{x64|arm64}/native/`
+  - 支持平台库命名规则: Windows (`AIPixelVM.dll`), Linux (`libAIPixelVM.so`), macOS (`libAIPixelVM.dylib`)
+  - 回退搜索: 应用根目录 → 操作系统默认搜索路径 (PATH / LD_LIBRARY_PATH)
+  - 实现 IDisposable 模式，子类继承释放语义
+  - 静态构造函数由 CLR 保证线程安全，解析器进程内仅注册一次
+
+#### LuaVM 类重构
+- **继承关系变更**: `LuaVM` 从直接实现 `IDisposable` 改为继承 `AIPixelVM` 基类
+  - 继承 `EnsureNotDisposed()` 方法，移除重复实现
+  - 继承 `_disposed` 释放标记，避免字段重复
+  - `Dispose()` 改为重写 `Dispose(bool)`，遵循标准 IDisposable 继承模式
+  - 释放顺序: 托管资源(GCHandle) → 非托管资源(LVM_Destroy) → 基类释放标记
+  - 无需修改任何外部调用代码，API 完全向后兼容
+
+#### 项目文件 AOT 配置
+- **LuaVM.csproj** 新增 AOT 发布配置:
+  - `<PublishAot>` 属性控制 Native AOT 编译开关（默认 false，开发阶段使用 JIT 模式）
+  - `<PublishTrimmed>` 条件属性，AOT 发布时自动启用裁剪
+  - `<IlcGenerateCompleteTypeMetadata>` 保留 P/Invoke 互操作所需的完整类型元数据
+  - `<IlcGenerateStackTraceData>` 保留堆栈跟踪信息（调试用）
+  - 发布命令示例: `dotnet publish -c Release -r win-x64 /p:PublishAot=true`
+
+#### 构建与测试结果
+- **Debug 构建**: 0 警告, 0 错误
+- **C# 示例程序**: 6/6 演示全部通过 (基本执行、栈操作、全局变量、表操作、错误处理、多虚拟机隔离)
+- **C++ 原生测试**: 34/34 通过 (MSVC 19.51)
+- **Native AOT 发布**: 成功生成 `LuaVM.exe` (2.6 MB 原生二进制)，运行结果与 JIT 模式完全一致
+
+#### 修复的历史问题
+- **Program.cs 表操作演示**: 修复 `DemoTableOperations` 中 `GetField` 后未清理栈导致 `SetGlobal` 赋值错误的 Bug（对象类型错误赋为数值类型）。在第二个 `GetField` 后添加 `SetTop(1)` 清理栈。
+- **CS8625 空性警告**: `LoadScriptFiles` 方法的 `suffix` 参数和 `blacklist` 参数添加 `?` 可空标注，消除警告。
+- **IL3000 裁剪警告**: 移除 `Assembly.Location` 依赖（AOT 单文件发布中始终返回空字符串），仅使用 `AppContext.BaseDirectory` 进行路径搜索。
+
+#### 设计原理
+- **为什么使用 NativeLibrary API 而非 LibraryImport**: 现有 27 个 `DllImport` 声明已使用 blittable 类型，在 .NET 8+ Native AOT 下得到良好支持。`NativeLibrary.SetDllImportResolver` 机制在保持现有 P/Invoke 声明不变的同时，提供 AOT 兼容的库路径解析，改动最小化。
+- **为什么选择 SetDllImportResolver**: 它允许在运行时动态决定加载哪个平台原生库，而无需修改任何 DllImport 属性。这对于跨平台 NuGet 包分发尤为重要 —— 同一程序集可以部署到 win-x64/linux-x64/osx-x64，解析器自动选择正确的 .dll/.so/.dylib。
+- **AIPixelVM 作为基类而非工具类**: 继承关系明确了 `LuaVM` 对 `AIPixelVM` 原生库的依赖，同时将 AOT 兼容逻辑封装在基类中，便于未来扩展其他虚拟机类型（如 `PythonVM : AIPixelVM`）。
+
+#### Files Modified
+- `csharp/LuaVM/AIPixelVM.cs` — 新建 AOT 兼容原生库基类 (244 行)
+- `csharp/LuaVM/LuaVM.cs` — 继承关系重构，IDisposable 模式调整
+- `csharp/LuaVM/Program.cs` — 修复表操作演示 Bug，空性标注修正
+- `csharp/LuaVM/LuaVM.csproj` — 新增 AOT 发布配置属性
+- `changelog/CHANGELOG.md` — 本文档
+
 ## [1.3.0] - 2026-04-26
 
 ### Added — External Function Registration API (Issue #3)

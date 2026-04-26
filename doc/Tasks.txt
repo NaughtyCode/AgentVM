@@ -11,5 +11,6 @@ claude --dangerously-skip-permissions
 1. 按 ./doc/issues/issue1.txt 要求执行任务
 2. 按 ./doc/issues/issue2.txt 要求执行任务
 3. 按 ./doc/issues/issue3.txt 要求执行任务
+4. 按 ./doc/issues/issue4.txt 要求执行任务
 
 --------------------- End of Task --------------------------

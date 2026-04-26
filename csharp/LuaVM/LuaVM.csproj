@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>LuaVM</RootNamespace>
     <AssemblyName>LuaVM</AssemblyName>
     <ImplicitUsings>disable</ImplicitUsings>
@@ -15,10 +15,42 @@
     <Description>
       C# wrapper for Lua/LuaJIT/Luau virtual machines via P/Invoke.
       Requires AIPixelVM.dll/.so/.dylib built from the C++ source.
+      Supports .NET Native AOT publishing.
     </Description>
 
     <!-- 原生库路径（NuGet RID 约定） -->
     <RuntimeIdentifiers>win-x64;linux-x64;osx-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <!-- ====================================================================
+       AOT 发布配置
+
+       Native AOT 将 C# 代码编译为平台原生二进制，无需 JIT 运行时。
+       通过 AIPixelVM 基类的 NativeLibrary.SetDllImportResolver 机制，
+       DllImport 声明在 AOT 模式下仍能正确解析原生库路径。
+
+       发布命令:
+         dotnet publish -c Release -r win-x64 /p:PublishAot=true
+         dotnet publish -c Release -r linux-x64 /p:PublishAot=true
+         dotnet publish -c Release -r osx-x64 /p:PublishAot=true
+
+       注意:
+       - AOT 编译需要与目标平台匹配的 NativeLibrary
+       - 字符串 marshaling 在 AOT 下需额外配置（MarshalAs 注解）
+       - GCHandle / Marshal.GetFunctionPointerForDelegate 在 AOT 下受限
+       ==================================================================== -->
+  <PropertyGroup>
+    <PublishAot>false</PublishAot>
+    <!-- 设为 true 启用 Native AOT 发布；开发阶段建议 false -->
+
+    <!-- AOT 相关选项（仅当 PublishAot=true 时生效） -->
+    <PublishTrimmed Condition="'$(PublishAot)' == 'true'">true</PublishTrimmed>
+
+    <!-- 保留必要的互操作代码，防止 AOT 裁剪掉 P/Invoke 所需的运行时支持 -->
+    <IlcGenerateCompleteTypeMetadata Condition="'$(PublishAot)' == 'true'">true</IlcGenerateCompleteTypeMetadata>
+
+    <!-- 生成完整的堆栈跟踪信息（调试用，生产环境可关闭） -->
+    <IlcGenerateStackTraceData Condition="'$(PublishAot)' == 'true'">true</IlcGenerateStackTraceData>
   </PropertyGroup>
 
   <!-- 将原生库复制到输出目录（开发模式） -->

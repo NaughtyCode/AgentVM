@@ -24,3 +24,4 @@ Thumbs.db
 
 # PixelAgent
 *.log
+csharp/LuaVM/publish-aot/*

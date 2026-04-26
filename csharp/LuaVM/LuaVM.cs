@@ -46,19 +46,23 @@ namespace LuaVM
     /// Lua 虚拟机封装类
     ///
     /// 设计要点:
-    /// - 实现 IDisposable 以自动管理非托管内存
+    /// - 继承 AIPixelVM 基类，继承 AOT 兼容的原生库加载与 IDisposable 模式
     /// - 所有方法通过 P/Invoke 调用 AIPixelVM，第一个参数为 IntPtr _opaque
     /// - 不暴露任何内部状态类型，C# 侧完全透明
     /// - 线程安全：同一个实例不应被多线程并发使用（不同实例之间安全）
+    ///
+    /// AOT 说明:
+    ///   基类 AIPixelVM 在静态构造函数中通过 NativeLibrary.SetDllImportResolver
+    ///   注册了 AOT 兼容的库解析器，因此本类中的 DllImport 声明在 Native AOT
+    ///   发布后仍能正确解析 AIPixelVM 原生库。
     /// </summary>
-    public sealed class LuaVM : IDisposable
+    public sealed class LuaVM : AIPixelVM
     {
         /* ====================================================================
          * 字段
          * ==================================================================== */
 
         private IntPtr _opaque;      // 不透明句柄（C++ 侧 OpaqueState*）
-        private bool   _disposed;    // 释放标记
         /// <summary>保持已注册回调的 GCHandle，防止委托被 GC 回收</summary>
         private List<GCHandle> _registeredCallbacks;
 
@@ -184,36 +188,45 @@ namespace LuaVM
         }
 
         /// <summary>
-        /// 释放虚拟机资源
+        /// 释放虚拟机资源（重写基类 IDisposable 模式）
+        ///
+        /// 清理顺序:
+        ///   1. 释放托管资源: 已注册回调的 GCHandle
+        ///   2. 释放非托管资源: 销毁 C++ 侧虚拟机实例
+        ///   3. 调用基类 Dispose(bool) 完成释放标记
         /// </summary>
-        public void Dispose()
+        /// <param name="disposing">
+        /// true  = 由 Dispose() 或 using 触发
+        /// false = 由终结器触发（不应从此路径调用，因为基类已有终结器）
+        /// </param>
+        protected override void Dispose(bool disposing)
         {
-            if (!_disposed && _opaque != IntPtr.Zero)
+            if (!_disposed)
             {
-                LVM_Destroy(_opaque);
-                _opaque = IntPtr.Zero;
-                _disposed = true;
-            }
-
-            // 释放已注册回调的 GCHandle，允许委托被 GC 回收
-            if (_registeredCallbacks != null)
-            {
-                foreach (var handle in _registeredCallbacks)
+                if (disposing)
                 {
-                    if (handle.IsAllocated)
-                        handle.Free();
+                    // 释放托管资源: 已注册回调的 GCHandle，允许委托被 GC 回收
+                    if (_registeredCallbacks != null)
+                    {
+                        foreach (var handle in _registeredCallbacks)
+                        {
+                            if (handle.IsAllocated)
+                                handle.Free();
+                        }
+                        _registeredCallbacks.Clear();
+                    }
                 }
-                _registeredCallbacks.Clear();
-            }
-        }
 
-        /// <summary>
-        /// 确认未释放，否则抛出
-        /// </summary>
-        private void EnsureNotDisposed()
-        {
-            if (_disposed)
-                throw new ObjectDisposedException(nameof(LuaVM));
+                // 释放非托管资源: 销毁 C++ 侧 Lua 虚拟机实例
+                if (_opaque != IntPtr.Zero)
+                {
+                    LVM_Destroy(_opaque);
+                    _opaque = IntPtr.Zero;
+                }
+
+                // 调用基类完成 _disposed 标记
+                base.Dispose(disposing);
+            }
         }
 
         /* ====================================================================
@@ -248,7 +261,7 @@ namespace LuaVM
         /// <param name="directory">目标目录路径</param>
         /// <param name="suffix">文件后缀（如 ".lua"），传 null 默认为 ".lua"</param>
         /// <returns>成功加载并执行的文件数量</returns>
-        public int LoadScriptFiles(string directory, string suffix = null)
+        public int LoadScriptFiles(string directory, string? suffix = null)
         {
             EnsureNotDisposed();
             return LVM_LoadScriptFiles(_opaque, directory, suffix ?? ".lua");
@@ -261,7 +274,7 @@ namespace LuaVM
         /// <param name="suffix">文件后缀（如 ".lua"），传 null 默认为 ".lua"</param>
         /// <param name="blacklist">需要排除的文件名列表（不含路径，含后缀）</param>
         /// <returns>成功加载并执行的文件数量</returns>
-        public int LoadScriptFiles(string directory, string suffix, string[] blacklist)
+        public int LoadScriptFiles(string directory, string? suffix, string[]? blacklist)
         {
             EnsureNotDisposed();
 
