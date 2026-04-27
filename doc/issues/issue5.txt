@@ -1,0 +1,12 @@
+
+前提
+1. 完成后构建并运行、测试，直到全部成功
+2. 生成完整的修改记录文档,修改记录文档放changelog目录下
+3. 代码必须加上详细注释
+
+LuaVM运行时会报下面这个错误，请检查并修复
+--- Demo: Error Handling ---
+  Syntax error caught: [string "syntax error --> @@@"]:1: syntax error near 'error'
+  Runtime error caught: [string "error('intentional error for testing')"]:1: intentional error for testing
+  After success, error is empty: ''
+  OK

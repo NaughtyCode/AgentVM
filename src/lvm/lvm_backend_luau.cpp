@@ -127,7 +127,7 @@ int LuauBackend::load_string(void* state, const char* code) {
     }
 
     /* Step 2: 加载字节码到状态机 */
-    int result = luau_load(L, "=script", bytecode, bytecodeSize, 0);
+    int result = luau_load(L, "=lua", bytecode, bytecodeSize, 0);
 
     /* 释放字节码临时缓冲区（luau_load 已复制所需数据） */
     std::free(bytecode);

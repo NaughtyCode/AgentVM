@@ -116,9 +116,11 @@ void Lua55Backend::destroy_state(void* state) {
 int Lua55Backend::load_string(void* state, const char* code) {
 #ifdef LVM_HAS_LUA55
     auto* L = static_cast<lua_State*>(state);
-    /* luaL_loadstring: 编译字符串为 Lua 函数块并压入栈顶
+    /* luaL_loadbuffer: 编译字符串为 Lua 函数块并压入栈顶
+     * 使用固定 chunk name "=lua" 替代 luaL_loadstring，避免源代码完整出现在错误消息中
+     * 参数: (L, buffer, size, chunkname)
      * 返回值: 0 = 成功 (LUA_OK), 非 0 = 编译错误 */
-    return luaL_loadstring(L, code);
+    return luaL_loadbuffer(L, code, std::strlen(code), "=lua");
 #else
     (void)state; (void)code;
     return -1;

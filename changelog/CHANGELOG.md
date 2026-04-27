@@ -52,6 +52,54 @@
 - `csharp/LuaVM/LuaVM.csproj` — 新增 AOT 发布配置属性
 - `changelog/CHANGELOG.md` — 本文档
 
+## [1.4.1] - 2026-04-27
+
+### Fixed — 错误消息包含完整源码问题 (Issue #5)
+
+#### 问题描述
+- `LVM_ExecuteString` 在编译/执行 Lua 代码失败时，错误消息中包含了完整的源代码文本
+  - 例如 `[string "syntax error --> @@@"]:1: syntax error near 'error'` — 源码出现在 `[string "..."]` 中
+  - 对于长脚本（数百/数千行），错误消息会变得极其冗长，难以阅读
+  - 存在敏感代码信息泄露风险（错误消息可能被记录到日志/发送到客户端）
+
+#### 根因
+- `luaL_loadstring(L, code)` 将完整的 `code` 字符串作为 Lua 的 chunk name 存储
+  - Lua 在报告编译/运行时错误时会将 chunk name 拼接到错误消息前缀
+  - 这是 `luaL_loadstring` 的标准行为，但在此项目中不适合生产使用
+
+#### 修复方案
+- **使用 `luaL_loadbuffer` 替代 `luaL_loadstring`**，显式指定固定的 chunk name `"=lua"`
+  - `luaL_loadbuffer(L, code, len, "=lua")` 行为与 `luaL_loadstring` 完全一致，仅 chunk name 不同
+  - `=` 前缀是 Lua 惯例，表示此 chunk 来自字符串（非文件），Lua 在错误消息中去掉 `=` 前缀
+  - 修复后错误消息格式: `lua:1: syntax error near 'error'`
+
+#### 影响范围（三个后端统一修复）
+- **Lua 5.5 后端** (`lvm_backend_lua55.cpp`): `luaL_loadstring(L, code)` → `luaL_loadbuffer(L, code, std::strlen(code), "=lua")`
+- **LuaJIT 后端** (`lvm_backend_luajit.cpp`): 同上，并补充 `#include <cstring>` 以使用 `std::strlen`
+- **Luau 后端** (`lvm_backend_luau.cpp`): chunk name 从 `"=script"` 统一为 `"=lua"`（Luau 使用 `luau_load` 而非 `luaL_loadbuffer`，修复前已有固定 chunk name）
+
+#### 构建与测试结果
+- **C++ 原生测试**: 34/34 通过 (MSVC 19.51)
+- **C# Debug 构建**: 0 警告, 0 错误, 6/6 演示通过
+- **C# Native AOT 发布**: 运行正常，错误消息格式一致
+
+#### 修复前后对比
+```
+修复前:
+  Syntax error caught: [string "syntax error --> @@@"]:1: syntax error near 'error'
+  Runtime error caught: [string "error('intentional error for testing')"]:1: intentional error for testing
+
+修复后:
+  Syntax error caught: lua:1: syntax error near 'error'
+  Runtime error caught: lua:1: intentional error for testing
+```
+
+#### Files Modified
+- `src/lvm/lvm_backend_lua55.cpp` — load_string 改用 luaL_loadbuffer + 固定 chunk name
+- `src/lvm/lvm_backend_luajit.cpp` — 同上，补充 cstring 头文件包含
+- `src/lvm/lvm_backend_luau.cpp` — 统一 chunk name 为 "=lua"
+- `changelog/CHANGELOG.md` — 本文档
+
 ## [1.3.0] - 2026-04-26
 
 ### Added — External Function Registration API (Issue #3)

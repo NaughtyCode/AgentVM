@@ -28,6 +28,7 @@
   #define LUA_MULTRET (-1)
 #endif
 
+#include <cstring>
 #include <cstdlib>
 
 namespace lvm {
@@ -77,8 +78,9 @@ void LuaJITBackend::destroy_state(void* state) {
 int LuaJITBackend::load_string(void* state, const char* code) {
 #ifdef LVM_HAS_LUAJIT
     auto* L = static_cast<lua_State*>(state);
-    /* LuaJIT 的 luaL_loadstring 与标准 Lua 完全兼容 */
-    return luaL_loadstring(L, code);
+    /* luaL_loadbuffer: 使用固定 chunk name "=lua" 替代 luaL_loadstring
+     * 避免源代码完整出现在错误消息中（安全性与可读性） */
+    return luaL_loadbuffer(L, code, std::strlen(code), "=lua");
 #else
     (void)state; (void)code;
     return -1;
