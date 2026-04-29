@@ -130,6 +130,9 @@ namespace LuaVM
         [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
         private static extern int LVM_IsNil(IntPtr opaque, int index);
 
+        [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int LVM_IsFunction(IntPtr opaque, int index);
+
         // ---- 取值 ----
         [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
         private static extern double LVM_ToNumber(IntPtr opaque, int index);
@@ -411,6 +414,17 @@ namespace LuaVM
 
         /// <summary>检查栈上 index 处是否为 nil</summary>
         public bool IsNil(int index) => LVM_IsNil(_opaque, index) != 0;
+
+        /// <summary>
+        /// 检查栈上 index 处是否为函数
+        /// 适用于验证通过 GetGlobal 或 GetField 获取的值是否为可调用函数，
+        /// 在 PCall 之前进行类型安全检查
+        /// </summary>
+        public bool IsFunction(int index)
+        {
+            EnsureNotDisposed();
+            return LVM_IsFunction(_opaque, index) != 0;
+        }
 
         /* ====================================================================
          * 公共方法 —— 全局变量

@@ -299,6 +299,15 @@ LVM_API int LVM_IsNil(void* opaque, int index)
     return op->backend->isnil(op->native_handle, index);
 }
 
+LVM_API int LVM_IsFunction(void* opaque, int index)
+{
+    /* 参数校验：null opaque 安全返回 0 */
+    if (!opaque) return 0;
+    auto* op = unwrap(opaque);
+    /* 委托给后端的具体实现（Lua 5.5 / LuaJIT / Luau 均支持此操作） */
+    return op->backend->isfunction(op->native_handle, index);
+}
+
 // =========================================================================
 // Value extraction
 // =========================================================================

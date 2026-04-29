@@ -158,6 +158,9 @@ LVM_API int    LVM_IsBoolean(void* opaque, int index);
 /** @brief 检查栈 index 处是否为 nil */
 LVM_API int    LVM_IsNil(void* opaque, int index);
 
+/** @brief 检查栈 index 处是否为函数 */
+LVM_API int    LVM_IsFunction(void* opaque, int index);
+
 /** @brief 将栈 index 处数值转为 double 返回 */
 LVM_API double LVM_ToNumber(void* opaque, int index);
 

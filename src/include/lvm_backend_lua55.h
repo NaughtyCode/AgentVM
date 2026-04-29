@@ -57,6 +57,7 @@ public:
     int         isstring(void* state, int idx) override;
     int         isboolean(void* state, int idx) override;
     int         isnil(void* state, int idx) override;
+    int         isfunction(void* state, int idx) override;
     double      tonumber(void* state, int idx) override;
     const char* tostring(void* state, int idx) override;
     int         toboolean(void* state, int idx) override;

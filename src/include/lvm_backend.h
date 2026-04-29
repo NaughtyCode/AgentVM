@@ -109,6 +109,9 @@ public:
     virtual int    isboolean(void* state, int idx) = 0;
     virtual int    isnil(void* state, int idx) = 0;
 
+    /** @brief 检查栈上 idx 位置的值是否为函数 */
+    virtual int    isfunction(void* state, int idx) = 0;
+
     /** @brief 将栈上 idx 位置的值转为 double */
     virtual double tonumber(void* state, int idx) = 0;
 

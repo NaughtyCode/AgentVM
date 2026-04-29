@@ -243,6 +243,17 @@ int Lua55Backend::isnil(void* state, int idx) {
 #endif
 }
 
+int Lua55Backend::isfunction(void* state, int idx) {
+#ifdef LVM_HAS_LUA55
+    /* lua_isfunction: 检查栈 idx 处的值是否为 Lua 函数
+     * 返回 1 表示是函数，0 表示不是（nil / number / string / table 等）
+     * Lua C 函数（经由 lua_pushcclosure 注册）也返回 1 */
+    return lua_isfunction(static_cast<lua_State*>(state), idx);
+#else
+    (void)state; (void)idx; return 0;
+#endif
+}
+
 /* ==========================================================================
  * 取值操作
  * ========================================================================== */

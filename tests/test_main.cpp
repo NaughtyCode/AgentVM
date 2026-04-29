@@ -297,6 +297,88 @@ TEST(type_check_nil) {
     LVM_Destroy(vm);
 }
 
+/**
+ * @brief 测试：LVM_IsFunction 检查 Lua 脚本中定义的函数
+ * 验证脚本定义的全局函数返回 true
+ */
+TEST(type_check_function_positive) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 定义一个 Lua 全局函数并通过 GetGlobal 压入栈中 */
+    int result = LVM_ExecuteString(vm, "function my_func() return 42 end");
+    TEST_ASSERT(result == 0, "Function definition should succeed");
+
+    LVM_GetGlobal(vm, "my_func");
+    TEST_ASSERT(LVM_IsFunction(vm, 1), "my_func should be a function");
+    TEST_ASSERT(!LVM_IsNil(vm, 1), "my_func should not be nil");
+    TEST_ASSERT(!LVM_IsNumber(vm, 1), "my_func should not be a number");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：LVM_IsFunction 对非函数值返回 false
+ * 验证 number / string / boolean / nil 均不被识别为函数
+ */
+TEST(type_check_function_negative) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 数值不是函数 */
+    LVM_PushNumber(vm, 42.0);
+    TEST_ASSERT(!LVM_IsFunction(vm, 1), "Number should not be a function");
+    LVM_SetTop(vm, 0);
+
+    /* 字符串不是函数 */
+    LVM_PushString(vm, "hello");
+    TEST_ASSERT(!LVM_IsFunction(vm, 1), "String should not be a function");
+    LVM_SetTop(vm, 0);
+
+    /* 布尔值不是函数 */
+    LVM_PushBoolean(vm, 1);
+    TEST_ASSERT(!LVM_IsFunction(vm, 1), "Boolean should not be a function");
+    LVM_SetTop(vm, 0);
+
+    /* nil 不是函数 */
+    LVM_PushNil(vm);
+    TEST_ASSERT(!LVM_IsFunction(vm, 1), "Nil should not be a function");
+    LVM_SetTop(vm, 0);
+
+    /* 表不是函数 */
+    LVM_NewTable(vm);
+    TEST_ASSERT(!LVM_IsFunction(vm, 1), "Table should not be a function");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：LVM_IsFunction 对 C 注册的外部函数也返回 true
+ * 验证通过 LVM_RegisterFunction 注册的 C 函数同样被识别为函数类型
+ */
+TEST(type_check_function_registered) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 注册一个 C 函数为全局变量 */
+    int result = LVM_RegisterFunction(vm, "c_func", test_add_callback);
+    TEST_ASSERT(result == 0, "RegisterFunction should succeed");
+
+    /* 获取该 C 闭包并验证类型 */
+    LVM_GetGlobal(vm, "c_func");
+    TEST_ASSERT(LVM_IsFunction(vm, 1), "Registered C function should be a function");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：LVM_IsFunction 传入 null opaque 安全返回 0
+ */
+TEST(type_check_function_null) {
+    int result = LVM_IsFunction(nullptr, 1);
+    TEST_ASSERT(result == 0, "Null opaque should return 0 without crashing");
+}
+
 /* ==========================================================================
  * 测试：取值操作
  * ========================================================================== */

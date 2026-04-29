@@ -254,6 +254,16 @@ int LuauBackend::isnil(void* state, int idx) {
 #endif
 }
 
+int LuauBackend::isfunction(void* state, int idx) {
+#ifdef LVM_HAS_LUAU
+    /* Luau 保留标准 Lua isfunction 语义
+     * 检查 idx 处值是否为函数（Luau 函数或 C 闭包） */
+    return lua_isfunction(static_cast<lua_State*>(state), idx);
+#else
+    (void)state; (void)idx; return 0;
+#endif
+}
+
 /* ==========================================================================
  * 取值操作
  * ========================================================================== */
