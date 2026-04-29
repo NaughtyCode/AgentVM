@@ -1,5 +1,65 @@
 # Changelog
 
+## [1.5.2] - 2026-04-29
+
+### Added — LVM_IsFunction Public API (Issue #8)
+
+#### 背景与目标
+- 此前类型检查 API 提供 `LVM_IsNumber` / `LVM_IsString` / `LVM_IsBoolean` / `LVM_IsNil` 四种检查，缺少函数类型检查
+- 在 `LVM_PCall` 调用前无法安全验证栈上值是否为可调用函数
+- 本次新增 `LVM_IsFunction` 填补类型检查体系的最后一块缺口
+
+#### New Public C ABI Function
+- **`LVM_IsFunction(void* opaque, int index)`** — 检查栈 `index` 处的值是否为函数
+  - 返回 `1` 表示是函数（Lua 脚本函数或 C 闭包），返回 `0` 表示不是
+  - 支持所有后端：Lua 5.5 (`lua_isfunction`)、LuaJIT (`lua_isfunction`)、Luau (`lua_isfunction`)
+  - null opaque 安全返回 `0`
+
+#### 使用场景
+- **PCall 前安全检查**：
+  ```c
+  LVM_GetGlobal(vm, "my_func");
+  if (LVM_IsFunction(vm, -1)) {
+      LVM_PCall(vm, 0, 1);  // 安全：已确认栈顶为函数
+  }
+  ```
+- **动态脚本兼容性**：加载脚本后检查预期函数是否存在，若缺失则回退到默认行为或报错
+
+#### Backend Interface 变更
+- **`AbstractBackend`**：新增 `virtual int isfunction(void* state, int idx) = 0` 纯虚方法
+- **Lua55Backend / LuaJITBackend / LuauBackend**：三个后端均实现该方法，直接委托给各宿主 Lua 库的 `lua_isfunction()`
+
+#### C# Integration
+- **`LuaVM.IsFunction(int index)`** — P/Invoke 封装的类型检查方法
+  - 返回 `bool`（C# 习惯），内部调用 `LVM_IsFunction`
+  - 带 `EnsureNotDisposed()` 守护
+  - 包含完整 XML 文档注释
+
+#### Test Coverage (4 new tests)
+- `type_check_function_positive` — 校验脚本定义的 Lua 函数返回 isfunction = true，且同时不为 nil/number
+- `type_check_function_negative` — 校验 number / string / boolean / nil / table 五种类型均返回 isfunction = false
+- `type_check_function_registered` — 校验通过 `LVM_RegisterFunction` 注册的 C 闭包同样返回 isfunction = true
+- `type_check_function_null` — null opaque 安全性验证
+
+#### 构建与测试结果
+- **C++ 原生测试**: 45/45 通过 (MSVC 19.51)
+- **C# Debug 构建**: 0 警告, 0 错误
+- **C# Release 构建**: 0 警告, 0 错误
+
+#### Files Modified
+- `src/include/lvm_backend.h` — AbstractBackend 新增 `isfunction` 纯虚方法声明
+- `src/include/lvm_backend_lua55.h` — Lua55Backend 新增 `isfunction` 重写声明
+- `src/include/lvm_backend_luajit.h` — LuaJITBackend 新增 `isfunction` 重写声明
+- `src/include/lvm_backend_luau.h` — LuauBackend 新增 `isfunction` 重写声明
+- `src/lvm/lvm_backend_lua55.cpp` — 实现 `isfunction`（~12 行）
+- `src/lvm/lvm_backend_luajit.cpp` — 实现 `isfunction`（~12 行）
+- `src/lvm/lvm_backend_luau.cpp` — 实现 `isfunction`（~12 行）
+- `src/include/lvm_api.h` — 新增 `LVM_IsFunction` 声明
+- `src/lvm/lvm_api.cpp` — 新增 `LVM_IsFunction` 实现
+- `csharp/LuaVM/LuaVM.cs` — 新增 P/Invoke 声明和 `IsFunction` 公共方法
+- `tests/test_main.cpp` — 新增 4 个测试用例（~90 行）
+- `changelog/CHANGELOG.md` — 本文档
+
 ## [1.5.1] - 2026-04-29
 
 ### Fixed — 项目整体审查与修复 (Issue #7)
