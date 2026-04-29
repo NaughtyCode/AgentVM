@@ -486,15 +486,17 @@ namespace LuaVM
         public void CallGlobal(string name)
         {
             EnsureNotDisposed();
+            int oldTop = GetTop();   // 保存当前栈顶，避免破坏调用者的栈数据
             GetGlobal(name);         // 压入函数
             int ret = LVM_PCall(_opaque, 0, 0);  // 0 参数，0 返回值
             if (ret != 0)
             {
+                SetTop(oldTop);      // 错误时恢复到调用前的栈状态
                 string err = GetLastError();
-                ClearStack();
                 throw new InvalidOperationException(
                     $"CallGlobal('{name}') failed: {err}");
             }
+            // 成功：无返回值，栈已恢复至调用前状态（函数已由 pcall 弹出）
         }
 
         /// <summary>
@@ -510,23 +512,24 @@ namespace LuaVM
         public double CallGlobalForNumber(string name)
         {
             EnsureNotDisposed();
+            int oldTop = GetTop();   // 保存调用前栈顶
             GetGlobal(name);         // 压入函数
             int ret = LVM_PCall(_opaque, 0, 1);  // 0 参数，1 返回值
             if (ret != 0)
             {
+                SetTop(oldTop);      // 错误时恢复栈
                 string err = GetLastError();
-                ClearStack();
                 throw new InvalidOperationException(
                     $"CallGlobalForNumber('{name}') failed: {err}");
             }
             if (!IsNumber(-1))
             {
-                ClearStack();
+                SetTop(oldTop);      // 类型不匹配时恢复栈
                 throw new InvalidOperationException(
                     $"CallGlobalForNumber('{name}'): return value is not a number");
             }
             double val = GetNumber(-1);
-            ClearStack();
+            SetTop(oldTop);          // 弹出返回值，恢复调用前栈状态
             return val;
         }
 
@@ -539,23 +542,24 @@ namespace LuaVM
         public string CallGlobalForString(string name)
         {
             EnsureNotDisposed();
+            int oldTop = GetTop();   // 保存调用前栈顶
             GetGlobal(name);         // 压入函数
             int ret = LVM_PCall(_opaque, 0, 1);  // 0 参数，1 返回值
             if (ret != 0)
             {
+                SetTop(oldTop);      // 错误时恢复栈
                 string err = GetLastError();
-                ClearStack();
                 throw new InvalidOperationException(
                     $"CallGlobalForString('{name}') failed: {err}");
             }
             if (!IsString(-1))
             {
-                ClearStack();
+                SetTop(oldTop);      // 类型不匹配时恢复栈
                 throw new InvalidOperationException(
                     $"CallGlobalForString('{name}'): return value is not a string");
             }
             string val = GetString(-1);
-            ClearStack();
+            SetTop(oldTop);          // 弹出返回值，恢复调用前栈状态
             return val;
         }
 
@@ -574,6 +578,12 @@ namespace LuaVM
                 throw new InvalidOperationException(
                     $"Lua execution failed: {GetLastError()}");
 
+            if (!IsNumber(-1))
+            {
+                ClearStack();
+                throw new InvalidOperationException(
+                    $"ExecuteAndGetNumber: result is not a number (type mismatch)");
+            }
             double val = GetNumber(-1);  // -1 = 栈顶
             ClearStack();
             return val;
@@ -653,7 +663,16 @@ namespace LuaVM
             _registeredCallbacks.Add(handle);
 
             IntPtr funcPtr = Marshal.GetFunctionPointerForDelegate(func);
-            return LVM_RegisterFunction(_opaque, name, funcPtr);
+            int result = LVM_RegisterFunction(_opaque, name, funcPtr);
+
+            // 注册失败时立即释放 GCHandle，避免内存泄漏
+            if (result != 0)
+            {
+                handle.Free();
+                _registeredCallbacks.Remove(handle);
+            }
+
+            return result;
         }
 
         /// <summary>
@@ -679,11 +698,13 @@ namespace LuaVM
 
             // 固定所有委托并获取函数指针
             IntPtr[] funcPtrs = new IntPtr[count];
+            var handles = new GCHandle[count];  // 跟踪本次分配的 GCHandle，失败时回滚
             for (int i = 0; i < count; i++)
             {
                 if (funcs[i] == null)
                     throw new ArgumentException($"funcs[{i}] is null");
-                _registeredCallbacks.Add(GCHandle.Alloc(funcs[i]));
+                handles[i] = GCHandle.Alloc(funcs[i]);
+                _registeredCallbacks.Add(handles[i]);
                 funcPtrs[i] = Marshal.GetFunctionPointerForDelegate(funcs[i]);
             }
 
@@ -696,7 +717,19 @@ namespace LuaVM
                     Marshal.WriteIntPtr(unmanagedArray, i * ptrSize, funcPtrs[i]);
                 }
 
-                return LVM_RegisterModule(_opaque, moduleName, funcNames, unmanagedArray, count);
+                int result = LVM_RegisterModule(_opaque, moduleName, funcNames, unmanagedArray, count);
+
+                // 注册失败时释放本次分配的 GCHandle，避免内存泄漏
+                if (result != 0)
+                {
+                    for (int i = 0; i < count; i++)
+                    {
+                        handles[i].Free();
+                        _registeredCallbacks.Remove(handles[i]);
+                    }
+                }
+
+                return result;
             }
             finally
             {

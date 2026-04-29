@@ -43,12 +43,12 @@ namespace lvm {
 /**
  * @brief   标准内存分配器回调
  * @details Lua 使用此回调管理所有内部内存。
- *          这里简单包装 C 标准库的 malloc / realloc / free。
- *          osize 参数是原始块大小（Lua 用于内存统计）。
+ *          包装 C 标准库的 malloc / realloc / free，
+ *          提供内存统计和调试的扩展点（可在此处添加内存追踪 / 限额控制）。
  *
  * @param ud    用户数据（此实现中未使用）
  * @param ptr   要重新分配/释放的内存块指针
- * @param osize 原始块大小
+ * @param osize 原始块大小（Lua 通知分配器当前块的大小）
  * @param nsize 新块大小（0 表示仅释放）
  * @return 新分配内存的指针，失败返回 nullptr
  */
@@ -74,17 +74,16 @@ void* Lua55Backend::create_state() {
 #ifdef LVM_HAS_LUA55
     /* === Lua 状态创建流程 ===
      *
-     * 1. luaL_newstate() — 便捷创建函数（内部调用 lua_newstate 并设置标准 allocator）
-     *    注意：Lua 5.5 中 luaL_newstate() 已废弃，改用 lua_newstate() + lua_sethostrandomseed()
-     *    当前使用 Lua 5.4 兼容路径
+     * 1. lua_newstate(lua55_alloc, nullptr) — 使用自定义 allocator 创建状态机
+     *    自定义 allocator 为将来添加内存统计 / 限额控制提供扩展点
      * 2. luaL_openlibs(L) — 加载所有标准库（base, math, string, table, ...）
      *
      * Lua 5.5 迁移说明：
-     *    切换到 Lua 5.5 时，需要:
-     *    - 替换 luaL_newstate() 为 lua_newstate(lua55_alloc, nullptr)
-     *    - 添加 lua_sethostrandomseed(L, LUA55_RANDOM_SEED)
+     *    切换到 Lua 5.5 正式版时，需添加:
+     *    - lua_sethostrandomseed(L, LUA55_RANDOM_SEED) 确保可重现随机数
+     *    (注: lua_sethostrandomseed 在 Lua 5.4 中尚不存在)
      */
-    lua_State* L = luaL_newstate();
+    lua_State* L = lua_newstate(lua55_alloc, nullptr);
     if (!L) {
         return nullptr;  // 内存分配失败
     }

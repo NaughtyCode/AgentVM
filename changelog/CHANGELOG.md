@@ -1,5 +1,74 @@
 # Changelog
 
+## [1.5.1] - 2026-04-29
+
+### Fixed — 项目整体审查与修复 (Issue #7)
+
+#### 概述
+对项目进行全量代码审查，发现并修复了 10 个问题，涵盖文档准确性、死代码清理、Lua API 兼容性、C# 资源管理和测试精确性。
+
+#### 修复详情
+
+**1. 文档修复 (lvm_api.h)**
+- **`LVM_GetLastError` 文档**：将 "静态缓冲区" 更正为 "opaque 实例内错误缓冲区"，与实现一致（每个实例独立的 `ErrorBuffer`，非全局静态缓冲）
+- **`LVM_ExecuteString` 文档**：错误信息获取方式从 "栈顶通过 LVM_ToString 获取" 更正为 "通过 LVM_GetLastError 获取"，与实现一致（执行失败后栈已被清理，错误存储在 `op->error`）
+- **`LVM_ExecuteFile` 文档**：补充错误信息获取方式的说明
+
+**2. 死代码修复 (lvm_backend_lua55.cpp)**
+- **问题**：`lua55_alloc` 自定义内存分配器函数已定义但从未使用，`create_state()` 使用 `luaL_newstate()`（内部分配默认内存分配器）
+- **修复**：`create_state()` 改用 `lua_newstate(lua55_alloc, nullptr)`，激活自定义分配器；更新注释说明当前为 Lua 5.4 路径，保留 Lua 5.5 迁移备注（`lua_sethostrandomseed` 在 5.5 正式版发布后启用）
+- **效果**：自定义分配器为将来添加内存追踪、限额控制、内存池等功能提供扩展点
+
+**3. LuaJIT API 兼容性修复 (lvm_backend_luajit.cpp)**
+- **问题**：`tonumber` 使用 `lua_tonumberx`，该函数在 Lua 5.2 中新增，LuaJIT（Lua 5.1 API）默认不包含此函数（需 `-DLUAJIT_ENABLE_LUA52COMPAT` 编译标志）
+- **修复**：改用 `lua_isnumber` + `lua_tonumber` 组合（Lua 5.1 原生 API），无需启用 LUA52COMPAT 即可编译
+
+**4. C# CallGlobal 栈安全修复 (LuaVM.cs)**
+- **问题**：`CallGlobal`、`CallGlobalForNumber`、`CallGlobalForString` 三个方法在错误时调用 `ClearStack()`（`SetTop(0)`），会销毁调用者栈上已有的数据
+- **修复**：在调用前保存 `oldTop = GetTop()`，错误或类型不匹配时通过 `SetTop(oldTop)` 精确恢复到调用前的栈状态，不影响调用者栈上其他数据
+- **场景**：调用者先压入若干参数，再调用 `CallGlobalForNumber` 获取某个配置值，若函数未定义，之前压入的参数不应被清空
+
+**5. GCHandle 内存泄漏修复 (LuaVM.cs)**
+- **问题**：`RegisterFunction` 和 `RegisterModule` 在原生注册失败（返回 -1）时，已分配的 `GCHandle` 未释放，委托被永久固定直到 `Dispose()` 被调用
+- **修复**：
+  - `RegisterFunction`：检查返回值，失败时立即 `handle.Free()` 并从 `_registeredCallbacks` 中移除
+  - `RegisterModule`：引入 `handles[]` 局部数组追踪本次分配的句柄，失败时批量释放并清理
+
+**6. ExecuteAndGetNumber 类型检查 (LuaVM.cs)**
+- **问题**：不检查栈顶值是否为数值类型，当 Lua 返回非数值时 `GetNumber` 返回 `0.0`（静默失败）
+- **修复**：调用 `GetNumber` 前增加 `IsNumber(-1)` 检查，类型不匹配时抛出 `InvalidOperationException` 并清理栈
+
+**7. 测试断言精确化 (test_main.cpp)**
+- **问题**：`batch_load_basic` 断言 `count >= 3`（实际应加载 5 个文件），`batch_load_default_suffix`、`batch_load_blacklist`、`batch_load_blacklist_multiple` 同样使用弱断言
+- **修复**：
+  - `batch_load_basic`: `count >= 3` → `count >= 5`
+  - `batch_load_default_suffix`: `count >= 3` → `count == 5`
+  - `batch_load_blacklist`: `count >= 3` → `count == 4`
+  - `batch_load_blacklist_multiple`: `count >= 2` → `count == 2`
+
+#### 构建与测试结果
+- **C++ 原生测试**: 41/41 通过 (MSVC 19.51)
+- **C# Debug 构建**: 0 警告, 0 错误
+- **C# Release 构建**: 0 警告, 0 错误
+
+#### 审计中识别但未修复的问题（记录以备将来）
+以下问题在审计中识别，但因涉及面较广或需要架构级变更，暂不在此次修复中处理：
+
+1. **`ErrorBuffer::get()` 返回悬空指针风险** — `const char*` 指向 `std::string` 内部缓冲区，同一 opaque 多线程并发调用 `set()`/`clear()` 时存在竞争。当前 API 文档约定同一 opaque 不应跨线程使用，此约定需要在文档中更明确标注
+2. **`lvm_bridge_callback` 绕过后端抽象** — 桥接回调直接使用 `lua_State*` 而非通过 `AbstractBackend`，导致 Luau 后端不支持外部函数注册。需要扩展 `AbstractBackend` 接口（添加 `pushlightuserdata`、`pushcclosure`）才能根本解决
+3. **CMakeLists.txt LuaJIT/Luau 构建链路不完整** — 仅打印指引消息，未设置 include 路径或链接库，`LVM_WITH_LUAJIT=ON` / `LVM_WITH_LUAU=ON` 将构建失败
+4. **`LUA_BUILD_AS_DLL` 用于静态库** — `lua55` 为 `STATIC` 库但定义了 `LUA_BUILD_AS_DLL`，可能触发 `__declspec` 不匹配警告
+5. **Tests 在静态初始化阶段运行** — `TEST` 宏在 `main()` 之前执行，某些链接场景下可能被跳过
+6. **缺少 LuaJIT/Luau 后端测试** — 所有测试仅使用 `type=1`（Lua 5.5）
+
+#### Files Modified
+- `src/include/lvm_api.h` — 修正 3 处 API 文档描述
+- `src/lvm/lvm_backend_lua55.cpp` — 激活自定义内存分配器，废弃 `luaL_newstate()` 改用 `lua_newstate()`
+- `src/lvm/lvm_backend_luajit.cpp` — `lua_tonumberx` → `lua_isnumber` + `lua_tonumber`（Lua 5.1 API 兼容）
+- `csharp/LuaVM/LuaVM.cs` — CallGlobal 栈安全修复、GCHandle 泄漏修复、ExecuteAndGetNumber 类型检查
+- `tests/test_main.cpp` — 4 处测试断言精确化
+- `changelog/CHANGELOG.md` — 本文档
+
 ## [1.5.0] - 2026-04-29
 
 ### Added — Lua Script Function Call API (Issue #6)

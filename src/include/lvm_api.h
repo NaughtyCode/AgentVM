@@ -56,8 +56,8 @@ LVM_API void  LVM_Destroy(void* opaque);
 /**
  * @brief 获取最后一次错误信息
  * @param opaque  虚拟机句柄
- * @return 指向内部静态缓冲区的错误描述字符串（只读）
- * @note  线程安全; 缓冲区在下次同 opaque 操作时被覆盖
+ * @return 指向 opaque 实例内错误缓冲区的字符串（只读）
+ * @note  返回值在下次同 opaque 实例操作时被覆盖；不同 opaque 实例间互不影响
  */
 LVM_API const char* LVM_GetLastError(void* opaque);
 
@@ -69,7 +69,7 @@ LVM_API const char* LVM_GetLastError(void* opaque);
  * @brief 执行 Lua 源码字符串
  * @param opaque  虚拟机句柄
  * @param code    Lua 源码（以 '\0' 结尾的 UTF-8 字符串）
- * @return 0 表示成功，非 0 表示失败（错误信息在栈顶，可通过 LVM_ToString 获取）
+ * @return 0 表示成功，非 0 表示失败（错误信息通过 LVM_GetLastError 获取）
  */
 LVM_API int   LVM_ExecuteString(void* opaque, const char* code);
 
@@ -77,7 +77,7 @@ LVM_API int   LVM_ExecuteString(void* opaque, const char* code);
  * @brief 执行 Lua 脚本文件
  * @param opaque    虚拟机句柄
  * @param filepath  脚本文件路径（UTF-8 编码）
- * @return 0 表示成功，非 0 表示失败
+ * @return 0 表示成功，非 0 表示失败（错误信息通过 LVM_GetLastError 获取）
  */
 LVM_API int   LVM_ExecuteFile(void* opaque, const char* filepath);
 

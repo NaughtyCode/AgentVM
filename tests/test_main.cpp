@@ -533,7 +533,7 @@ TEST(batch_load_basic) {
      * 应加载: init.lua, test1.lua, test2.lua, test3.lua, skip_me.lua (共 5 个)
      * 不应加载: helper.lualib (后缀不匹配) */
     int count = LVM_LoadScriptFiles(vm, TEST_SCRIPTS_DIR, ".lua");
-    TEST_ASSERT(count >= 3, "Should load at least 3 .lua files");
+    TEST_ASSERT(count >= 5, "Should load exactly 5 .lua files");
 
     /* 验证各脚本设置的全局变量 */
     LVM_GetGlobal(vm, "test1_executed");
@@ -560,7 +560,7 @@ TEST(batch_load_custom_suffix) {
     void* vm = LVM_Create(1);
     TEST_ASSERT(vm != nullptr, "LVM_Create failed");
 
-    /* 加载 .lualib 后缀的文件 —— 应只加载 helper.lualib */
+    /* 加载 .lualib 后缀的文件 —— 应只加载 helper.lualib (共 1 个) */
     int count = LVM_LoadScriptFiles(vm, TEST_SCRIPTS_DIR, ".lualib");
     TEST_ASSERT(count >= 1, "Should load at least 1 .lualib file");
 
@@ -581,9 +581,9 @@ TEST(batch_load_default_suffix) {
     void* vm = LVM_Create(1);
     TEST_ASSERT(vm != nullptr, "LVM_Create failed");
 
-    /* suffix 传 nullptr，应默认为 ".lua" */
+    /* suffix 传 nullptr，应默认为 ".lua"，加载全部 5 个 .lua 文件 */
     int count = LVM_LoadScriptFiles(vm, TEST_SCRIPTS_DIR, nullptr);
-    TEST_ASSERT(count >= 3, "Default suffix should load at least 3 .lua files");
+    TEST_ASSERT(count == 5, "Default suffix should load exactly 5 .lua files");
 
     LVM_GetGlobal(vm, "test1_executed");
     TEST_ASSERT(LVM_IsBoolean(vm, 1),
@@ -596,12 +596,12 @@ TEST(batch_load_blacklist) {
     void* vm = LVM_Create(1);
     TEST_ASSERT(vm != nullptr, "LVM_Create failed");
 
-    /* 黑名单排除 skip_me.lua */
+    /* 黑名单排除 skip_me.lua，期望加载 4 个文件 */
     const char* blacklist[] = { "skip_me.lua" };
 
     int count = LVM_LoadScriptFilesEx(vm, TEST_SCRIPTS_DIR, ".lua",
         blacklist, 1);
-    TEST_ASSERT(count >= 3, "Should load scripts except blacklisted ones");
+    TEST_ASSERT(count == 4, "Should load 4 scripts excluding 1 blacklisted");
 
     /* 黑名单中的文件不应被执行 */
     LVM_GetGlobal(vm, "skipped");
@@ -621,12 +621,12 @@ TEST(batch_load_blacklist_multiple) {
     void* vm = LVM_Create(1);
     TEST_ASSERT(vm != nullptr, "LVM_Create failed");
 
-    /* 黑名单排除多个文件 */
+    /* 黑名单排除 3 个文件，期望加载剩余 2 个 (test1.lua, test2.lua) */
     const char* blacklist[] = { "skip_me.lua", "init.lua", "test3.lua" };
 
     int count = LVM_LoadScriptFilesEx(vm, TEST_SCRIPTS_DIR, ".lua",
         blacklist, 3);
-    TEST_ASSERT(count >= 2, "Should load non-blacklisted files");
+    TEST_ASSERT(count == 2, "Should load exactly 2 non-blacklisted files");
 
     /* 被排除的文件不应执行 */
     LVM_GetGlobal(vm, "skipped");

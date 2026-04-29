@@ -203,9 +203,12 @@ int LuaJITBackend::isnil(void* state, int idx) {
 double LuaJITBackend::tonumber(void* state, int idx) {
 #ifdef LVM_HAS_LUAJIT
     auto* L = static_cast<lua_State*>(state);
-    int isNum = 0;
-    double result = lua_tonumberx(L, idx, &isNum);
-    return isNum ? result : 0.0;
+    /* lua_tonumber: Lua 5.1 原生 API，返回 0.0 表示非数值或索引无效
+     * 使用 lua_isnumber 预先检查以便区分 "值为 0" 和 "非数值" 的情况 */
+    if (!lua_isnumber(L, idx)) {
+        return 0.0;
+    }
+    return lua_tonumber(L, idx);
 #else
     (void)state; (void)idx; return 0.0;
 #endif
