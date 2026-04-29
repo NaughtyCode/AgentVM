@@ -152,6 +152,15 @@ void LuaJITBackend::pushboolean(void* state, int v) {
 #endif
 }
 
+void LuaJITBackend::pushvalue(void* state, int idx) {
+#ifdef LVM_HAS_LUAJIT
+    /* lua_pushvalue: LuaJIT 5.1 API 标准函数，复制栈上索引处的值到栈顶 */
+    lua_pushvalue(static_cast<lua_State*>(state), idx);
+#else
+    (void)state; (void)idx;
+#endif
+}
+
 void LuaJITBackend::pushnil(void* state) {
 #ifdef LVM_HAS_LUAJIT
     lua_pushnil(static_cast<lua_State*>(state));

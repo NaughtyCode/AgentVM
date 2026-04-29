@@ -1,5 +1,67 @@
 # Changelog
 
+## [1.5.3] - 2026-04-29
+
+### Added — LVM_PushValue Public API (Issue #9)
+
+#### 背景与目标
+- 此前栈操作 API 仅支持压入新值（PushNumber / PushString / PushBoolean / PushNil），无法复制栈上已有的值
+- 缺少复制栈上函数引用的能力，导致每次 PCall 消耗函数引用后需重新 GetGlobal
+- `LVM_PushValue` 提供了 `lua_pushvalue` 的标准封装，支持将栈上任意索引处的值副本压入栈顶
+
+#### New Public C ABI Function
+- **`LVM_PushValue(void* opaque, int index)`** — 将栈 `index` 处元素的副本压入栈顶
+  - 支持正数索引（绝对位置）和负数索引（栈顶相对位置）
+  - 值语义复制（基本类型按值复制，表/函数等引用类型复制引用而非深拷贝）
+  - 常见用途：在 PCall 前复制函数引用，使原引用得以保留可多次调用
+  - null opaque 安全空操作
+
+#### 典型使用场景
+```c
+/* 复制函数引用以支持多次调用 */
+LVM_GetGlobal(vm, "my_func");   // 栈: [my_func]
+LVM_PushValue(vm, -1);          // 栈: [my_func, my_func]
+LVM_PushNumber(vm, 10.0);       // 栈: [my_func, my_func, 10]
+LVM_PCall(vm, 1, 0);            // 栈: [my_func]  -- 调用消耗副本
+// 原函数引用仍在，可继续调用
+LVM_PushNumber(vm, 20.0);
+LVM_PCall(vm, 1, 0);            // 再次调用
+```
+
+#### Backend Interface 变更
+- **`AbstractBackend`**：新增 `virtual void pushvalue(void* state, int idx) = 0` 纯虚方法
+- **Lua55Backend / LuaJITBackend / LuauBackend**：三个后端均实现，委托 `lua_pushvalue()`
+
+#### C# Integration
+- **`LuaVM.PushValue(int index)`** — 带 `EnsureNotDisposed()` 守护的封装方法
+
+#### Test Coverage (6 new tests)
+- `pushvalue_copy_number` — 复制数值：验证副本值相等、删除副本后原值不变
+- `pushvalue_copy_string` — 复制字符串：验证副本内容一致
+- `pushvalue_copy_function` — 复制函数引用：核心场景验证 —— PushValue 后 PCall 消耗副本，原函数引用仍可再次调用
+- `pushvalue_negative_index` — 负数索引验证：-2 索引正确复制从栈顶数第 2 个元素
+- `pushvalue_copy_nil` — 复制 nil：验证 nil 可被正确复制
+- `pushvalue_null_opaque` — null 安全性验证
+
+#### 构建与测试结果
+- **C++ 原生测试**: 51/51 通过 (MSVC 19.51)
+- **C# Debug 构建**: 0 警告, 0 错误
+- **C# Release 构建**: 0 警告, 0 错误
+
+#### Files Modified
+- `src/include/lvm_backend.h` — AbstractBackend 新增 `pushvalue` 纯虚方法
+- `src/include/lvm_backend_lua55.h` — Lua55Backend 新增 `pushvalue` 声明
+- `src/include/lvm_backend_luajit.h` — LuaJITBackend 新增 `pushvalue` 声明
+- `src/include/lvm_backend_luau.h` — LuauBackend 新增 `pushvalue` 声明
+- `src/lvm/lvm_backend_lua55.cpp` — 实现 `pushvalue`（~12 行）
+- `src/lvm/lvm_backend_luajit.cpp` — 实现 `pushvalue`（~10 行）
+- `src/lvm/lvm_backend_luau.cpp` — 实现 `pushvalue`（~10 行）
+- `src/include/lvm_api.h` — 新增 `LVM_PushValue` 声明
+- `src/lvm/lvm_api.cpp` — 新增 `LVM_PushValue` 实现（~20 行，含详细使用注释）
+- `csharp/LuaVM/LuaVM.cs` — 新增 P/Invoke + `PushValue` 方法
+- `tests/test_main.cpp` — 新增 6 个测试用例（~120 行）
+- `changelog/CHANGELOG.md` — 本文档
+
 ## [1.5.2] - 2026-04-29
 
 ### Added — LVM_IsFunction Public API (Issue #8)

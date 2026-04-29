@@ -97,6 +97,9 @@ public:
     /** @brief 将布尔值压入栈顶 */
     virtual void   pushboolean(void* state, int v) = 0;
 
+    /** @brief 将栈 idx 处的值的副本压入栈顶 */
+    virtual void   pushvalue(void* state, int idx) = 0;
+
     /** @brief 将 nil 压入栈顶 */
     virtual void   pushnil(void* state) = 0;
 

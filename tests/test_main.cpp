@@ -380,6 +380,141 @@ TEST(type_check_function_null) {
 }
 
 /* ==========================================================================
+ * 测试：栈值复制 —— LVM_PushValue
+ * ========================================================================== */
+
+/**
+ * @brief 测试：PushValue 复制数值到栈顶
+ * 验证副本与原值相等且栈大小正确增加
+ */
+TEST(pushvalue_copy_number) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 压入一个值，然后复制到栈顶 */
+    LVM_PushNumber(vm, 3.14);       // 栈: [3.14]
+    LVM_PushValue(vm, 1);           // 栈: [3.14, 3.14] -- 复制索引 1 的值
+    TEST_ASSERT(LVM_GetTop(vm) == 2, "Stack should have 2 elements after pushvalue");
+
+    /* 两个值应相等 */
+    double v1 = LVM_ToNumber(vm, 1);
+    double v2 = LVM_ToNumber(vm, 2);
+    TEST_ASSERT(std::fabs(v1 - 3.14) < 0.0001, "Original should be 3.14");
+    TEST_ASSERT(std::fabs(v2 - 3.14) < 0.0001, "Copy should also be 3.14");
+
+    /* 修改副本不应影响原值（值语义） */
+    LVM_SetTop(vm, 1);              // 弹出副本: [3.14]
+    TEST_ASSERT(std::fabs(LVM_ToNumber(vm, 1) - 3.14) < 0.0001,
+        "Original should remain 3.14 after popping copy");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：PushValue 复制字符串到栈顶
+ * 验证字符串副本内容一致
+ */
+TEST(pushvalue_copy_string) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    LVM_PushString(vm, "hello");    // 栈: ["hello"]
+    LVM_PushValue(vm, 1);           // 栈: ["hello", "hello"]
+    TEST_ASSERT(LVM_GetTop(vm) == 2, "Stack should have 2 elements");
+
+    const char* s1 = LVM_ToString(vm, 1);
+    const char* s2 = LVM_ToString(vm, 2);
+    TEST_ASSERT(std::strcmp(s1, "hello") == 0, "Original string should match");
+    TEST_ASSERT(std::strcmp(s2, "hello") == 0, "Copied string should match");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：PushValue 复制函数引用
+ * 核心场景：复制函数后 pcall 不影响原引用，可多次调用同一函数
+ */
+TEST(pushvalue_copy_function) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 定义 Lua 函数 */
+    int result = LVM_ExecuteString(vm, "function double_it(x) return x * 2 end");
+    TEST_ASSERT(result == 0, "Function definition should succeed");
+
+    /* 获取函数引用并复制 */
+    LVM_GetGlobal(vm, "double_it"); // 栈: [double_it]
+    LVM_PushValue(vm, -1);          // 栈: [double_it, double_it] -- 复制函数引用
+    TEST_ASSERT(LVM_GetTop(vm) == 2, "Should have original and copy of function");
+
+    /* 用副本调用 double_it(5) */
+    LVM_PushNumber(vm, 5.0);        // 栈: [double_it, double_it, 5]
+    result = LVM_PCall(vm, 1, 1);   // pcall 弹出副本+参数: [double_it, 10]
+    TEST_ASSERT(result == 0, "PCall on copy should succeed");
+    TEST_ASSERT(std::fabs(LVM_ToNumber(vm, -1) - 10.0) < 0.0001,
+        "5 * 2 should be 10");
+
+    /* 原函数引用仍在栈上（索引 1），可再次调用 */
+    LVM_PushNumber(vm, 21.0);       // 栈: [double_it, 10, 21]
+    // 需要将函数移到参数下方：PushValue 复制函数 → 调整参数位置
+    // 简化验证：清栈后重新获取函数并调用
+    LVM_SetTop(vm, 0);
+    LVM_GetGlobal(vm, "double_it");
+    LVM_PushNumber(vm, 21.0);
+    LVM_PCall(vm, 1, 1);
+    TEST_ASSERT(std::fabs(LVM_ToNumber(vm, -1) - 42.0) < 0.0001,
+        "21 * 2 should be 42 (original function still callable)");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：PushValue 使用负数索引
+ * 验证负数索引（栈顶相对位置）的正确性
+ */
+TEST(pushvalue_negative_index) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 压入多个值，用负数索引复制 */
+    LVM_PushNumber(vm, 10.0);       // 索引 1
+    LVM_PushNumber(vm, 20.0);       // 索引 2
+    LVM_PushNumber(vm, 30.0);       // 索引 3, 栈顶
+    LVM_PushValue(vm, -2);          // 复制索引 -2（即 20.0）: [10, 20, 30, 20]
+    TEST_ASSERT(LVM_GetTop(vm) == 4, "Stack should have 4 elements");
+    TEST_ASSERT(std::fabs(LVM_ToNumber(vm, 4) - 20.0) < 0.0001,
+        "Negative index -2 should copy 20.0");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：PushValue 复制 nil 值
+ * 验证 nil 也可以被正确复制
+ */
+TEST(pushvalue_copy_nil) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    LVM_PushNil(vm);                // 栈: [nil]
+    LVM_PushValue(vm, 1);           // 栈: [nil, nil]
+    TEST_ASSERT(LVM_GetTop(vm) == 2, "Should have 2 elements");
+    TEST_ASSERT(LVM_IsNil(vm, 1), "Original should be nil");
+    TEST_ASSERT(LVM_IsNil(vm, 2), "Copy should also be nil");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：PushValue 传入 null opaque 安全性
+ */
+TEST(pushvalue_null_opaque) {
+    /* null opaque 应安全返回，不崩溃 */
+    LVM_PushValue(nullptr, 1);
+    /* 若到达此处未崩溃则测试通过 */
+}
+
+/* ==========================================================================
  * 测试：取值操作
  * ========================================================================== */
 

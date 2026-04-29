@@ -63,6 +63,7 @@ public:
     void pushnumber(void* state, double v) override;
     void pushstring(void* state, const char* s) override;
     void pushboolean(void* state, int v) override;
+    void pushvalue(void* state, int idx) override;
     void pushnil(void* state) override;
 
     /* ---- 类型检查与取值 ---- */

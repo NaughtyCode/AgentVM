@@ -199,6 +199,17 @@ void Lua55Backend::pushboolean(void* state, int v) {
 #endif
 }
 
+void Lua55Backend::pushvalue(void* state, int idx) {
+#ifdef LVM_HAS_LUA55
+    /* lua_pushvalue: 将栈 idx 处元素的副本压入栈顶
+     * 支持任意有效索引（正数/负数），包括伪索引（如 LUA_REGISTRYINDEX）
+     * 常见用途: 复制函数引用以便 pcall 后保留原函数 */
+    lua_pushvalue(static_cast<lua_State*>(state), idx);
+#else
+    (void)state; (void)idx;
+#endif
+}
+
 void Lua55Backend::pushnil(void* state) {
 #ifdef LVM_HAS_LUA55
     lua_pushnil(static_cast<lua_State*>(state));

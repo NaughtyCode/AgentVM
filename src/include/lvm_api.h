@@ -139,6 +139,9 @@ LVM_API void   LVM_PushString(void* opaque, const char* str);
 /** @brief 将布尔值压入栈顶（0 = false, 非 0 = true） */
 LVM_API void   LVM_PushBoolean(void* opaque, int value);
 
+/** @brief 将栈 index 处元素的副本压入栈顶（值复制，非引用） */
+LVM_API void   LVM_PushValue(void* opaque, int index);
+
 /** @brief 将 nil 压入栈顶 */
 LVM_API void   LVM_PushNil(void* opaque);
 

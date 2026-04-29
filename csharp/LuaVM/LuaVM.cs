@@ -115,6 +115,9 @@ namespace LuaVM
         private static extern void LVM_PushBoolean(IntPtr opaque, int value);
 
         [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void LVM_PushValue(IntPtr opaque, int index);
+
+        [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
         private static extern void LVM_PushNil(IntPtr opaque);
 
         // ---- 类型检查 ----
@@ -368,6 +371,17 @@ namespace LuaVM
         {
             EnsureNotDisposed();
             LVM_PushBoolean(_opaque, value ? 1 : 0);
+        }
+
+        /// <summary>
+        /// 将栈 index 处元素的副本压入栈顶（值复制，非引用）
+        /// 常用于在 PCall 前保留函数引用的副本，调用后原引用仍可继续使用
+        /// </summary>
+        /// <param name="index">源元素的栈索引（支持正数和负数索引）</param>
+        public void PushValue(int index)
+        {
+            EnsureNotDisposed();
+            LVM_PushValue(_opaque, index);
         }
 
         /// <summary>将 nil 压入栈顶</summary>

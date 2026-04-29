@@ -210,6 +210,15 @@ void LuauBackend::pushboolean(void* state, int v) {
 #endif
 }
 
+void LuauBackend::pushvalue(void* state, int idx) {
+#ifdef LVM_HAS_LUAU
+    /* lua_pushvalue: Luau 保留标准 Lua 语义，复制栈上索引处的值到栈顶 */
+    lua_pushvalue(static_cast<lua_State*>(state), idx);
+#else
+    (void)state; (void)idx;
+#endif
+}
+
 void LuauBackend::pushnil(void* state) {
 #ifdef LVM_HAS_LUAU
     lua_pushnil(static_cast<lua_State*>(state));

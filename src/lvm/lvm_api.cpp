@@ -260,6 +260,21 @@ LVM_API void LVM_PushBoolean(void* opaque, int value)
     op->backend->pushboolean(op->native_handle, value);
 }
 
+LVM_API void LVM_PushValue(void* opaque, int index)
+{
+    /* 将栈 index 处元素的副本压入栈顶
+     * 典型用途：复制函数引用到栈顶，使得 pcall 后原引用仍保留
+     * 使用示例：
+     *   LVM_GetGlobal(vm, "my_func");  // [my_func]
+     *   LVM_PushValue(vm, -1);         // [my_func, my_func]  -- 复制一份
+     *   LVM_PCall(vm, 0, 0);          // [my_func]  -- pcall 弹出副本执行
+     *   // 原函数引用仍在栈上，可再次调用
+     */
+    if (!opaque) return;
+    auto* op = unwrap(opaque);
+    op->backend->pushvalue(op->native_handle, index);
+}
+
 LVM_API void LVM_PushNil(void* opaque)
 {
     if (!opaque) return;
