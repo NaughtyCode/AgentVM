@@ -388,6 +388,60 @@ LVM_API void LVM_SetField(void* opaque, int index, const char* key)
 }
 
 // =========================================================================
+// Function call — 调用栈上的 Lua 函数（全局函数 / 模块内函数）
+// =========================================================================
+
+/**
+ * @brief 以保护模式调用栈上的 Lua 函数
+ *
+ * 本函数是调用 Lua 脚本中定义的函数的核心 API：
+ * - 调用前需将函数和参数按正确顺序压入栈中
+ * - 函数必须位于参数下方：栈布局为 [..., func, arg1, ..., argN]
+ * - 调用成功后将参数和函数弹出，压入指定数量的返回值
+ * - 调用失败时错误信息存储在 opaque 的错误缓冲区中
+ *
+ * 典型使用场景：
+ * 1. 调用全局 Lua 函数（由脚本定义）
+ * 2. 调用 Lua 模块（表）内的函数
+ * 3. 调用外部注册的 C 函数（但通常直接从 Lua 侧调用）
+ *
+ * @param opaque    虚拟机句柄
+ * @param nargs     传递给函数的参数数量
+ * @param nresults  期望的返回值数量（-1 = LUA_MULTRET 表示返回所有值）
+ * @return 0 = 成功（结果在栈顶），非 0 = 运行时错误
+ */
+LVM_API int LVM_PCall(void* opaque, int nargs, int nresults)
+{
+    /* 1. 参数校验 */
+    if (!opaque) return -1;
+    auto* op = unwrap(opaque);
+
+    auto  L = op->native_handle;
+    auto& b = *op->backend;
+
+    /* 2. 调用后端 pcall：
+     *    - nargs:  从栈顶往下数的参数个数
+     *    - nresults: 期望压入栈中的返回值个数
+     *    - errfunc: 0 表示没有错误处理函数
+     */
+    int execResult = b.pcall(L, nargs, nresults, 0);
+
+    /* 3. 处理执行结果 */
+    if (execResult != 0) {
+        // 函数执行出错：提取错误信息并存储
+        const char* err = b.tostring(L, -1);
+        op->error.set(err ? err : "unknown runtime error in pcall");
+        // 弹出错误信息（保留栈的干净状态）
+        b.settop(L, 0);
+        return -1;
+    }
+
+    // 执行成功：清除错误缓冲区，结果保留在栈上供调用者读取
+    op->error.clear();
+    return 0;
+}
+
+// =========================================================================
 // Batch script loading from directory
 // =========================================================================
 

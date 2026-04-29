@@ -210,6 +210,41 @@ LVM_API void   LVM_GetField(void* opaque, int index, const char* key);
 LVM_API void   LVM_SetField(void* opaque, int index, const char* key);
 
 /* --------------------------------------------------------------------------
+ * 函数调用 —— 调用 Lua 脚本中定义的函数（全局函数 / 模块内函数）
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief 以保护模式调用栈上的 Lua 函数
+ * @param opaque    虚拟机句柄
+ * @param nargs     传递给函数的参数个数
+ * @param nresults  期望的返回值个数（LUA_MULTRET = -1 表示返回所有结果）
+ * @return 0 = 成功（结果在栈顶），非 0 = 运行时错误
+ * @note  调用前栈布局: [..., func, arg1, ..., argN]
+ *         调用后栈布局: [..., result1, ..., resultM]
+ * @note  若函数执行出错，错误信息通过 LVM_GetLastError() 获取
+ *
+ * 使用示例（调用全局函数 "add(10, 20)"）：
+ * @code
+ *   LVM_GetGlobal(vm, "add");      // 压入函数
+ *   LVM_PushNumber(vm, 10);        // 压入参数 1
+ *   LVM_PushNumber(vm, 20);        // 压入参数 2
+ *   int ret = LVM_PCall(vm, 2, 1); // 调用，2 个参数，1 个返回值
+ *   double result = LVM_ToNumber(vm, -1);  // 获取结果
+ * @endcode
+ *
+ * 使用示例（调用模块函数 "math_ext.multiply(6, 7)"）：
+ * @code
+ *   LVM_GetGlobal(vm, "math_ext");     // 压入模块表
+ *   LVM_GetField(vm, -1, "multiply");   // 压入模块内函数
+ *   LVM_PushNumber(vm, 6);              // 压入参数 1
+ *   LVM_PushNumber(vm, 7);              // 压入参数 2
+ *   int ret = LVM_PCall(vm, 2, 1);      // 调用，2 个参数，1 个返回值
+ *   double result = LVM_ToNumber(vm, -1); // 获取结果
+ * @endcode
+ */
+LVM_API int LVM_PCall(void* opaque, int nargs, int nresults);
+
+/* --------------------------------------------------------------------------
  * 外部函数注册 —— 将 C/C++ 函数注册为 Lua 全局函数或模块
  * -------------------------------------------------------------------------- */
 

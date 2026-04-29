@@ -1,5 +1,86 @@
 # Changelog
 
+## [1.5.0] - 2026-04-29
+
+### Added — Lua Script Function Call API (Issue #6)
+
+#### 背景与目标
+- 此前虚拟机只能执行 Lua 源码字符串/文件，或通过 `LVM_RegisterFunction` 注册 C 函数供 Lua 调用
+- 缺少从 C/C# 侧直接调用 Lua 脚本中定义的全局函数和模块内函数的 API
+- 本次新增 `LVM_PCall` 填补了这一关键缺口，实现了 C/C# → Lua 的双向函数调用
+
+#### New Public C ABI Function
+- **`LVM_PCall(void* opaque, int nargs, int nresults)`** — 以保护模式调用栈上的 Lua 函数
+  - 调用前栈布局: `[..., func, arg1, ..., argN]`（函数必须位于参数下方）
+  - 调用后栈布局: `[..., result1, ..., resultM]`（函数和参数被弹出，压入返回值）
+  - `nresults = -1`（即 LUA_MULTRET）表示返回函数的所有返回值
+  - 返回 `0` 表示成功，非 `0` 表示运行时错误（错误信息通过 `LVM_GetLastError()` 获取）
+  - 错误发生时自动清理栈，保证 VM 状态一致性
+
+#### API 设计决策
+- **为什么不添加 `lua_insert`/`lua_remove` 等栈操作 API**：遵循最小化接口原则，`LVM_PCall` 配合现有 `LVM_GetGlobal` + `LVM_GetField` 已能完整支持全局函数和模块函数的调用场景。额外栈操作会增加所有后端（Lua 5.5/LuaJIT/Luau）的维护负担
+- **函数调用顺序设计**：先压入函数再压入参数（`GetGlobal → PushNumber/PushString → PCall`），与 Lua C API 的 `lua_pcall` 约定一致
+- **模块函数调用模式**：利用 `lua_pcall` 仅弹出函数和参数的特性，模块表残留在栈底不影响调用，调用后统一通过 `ClearStack` 清理
+
+#### 调用示例
+**调用全局函数**（脚本定义 `function add(a, b) return a + b end`）:
+```c
+LVM_GetGlobal(vm, "add");       // 压入函数
+LVM_PushNumber(vm, 10.0);       // 压入参数 1
+LVM_PushNumber(vm, 20.0);       // 压入参数 2
+LVM_PCall(vm, 2, 1);            // 调用（2 参数，1 返回值）
+double result = LVM_ToNumber(vm, -1); // 获取结果: 30.0
+```
+
+**调用模块内函数**（脚本定义 `math_ext = { multiply = function(a,b) return a*b end }`）:
+```c
+LVM_GetGlobal(vm, "math_ext");     // 压入模块表
+LVM_GetField(vm, -1, "multiply");   // 压入模块内函数
+LVM_PushNumber(vm, 6.0);            // 压入参数 1
+LVM_PushNumber(vm, 7.0);            // 压入参数 2
+LVM_PCall(vm, 2, 1);                // 调用（2 参数，1 返回值）
+double result = LVM_ToNumber(vm, -1); // 获取结果: 42.0
+```
+
+#### C# Integration
+- **`LuaVM.PCall(int nargs, int nresults)`** — P/Invoke 封装的底层 PCall
+- **`LuaVM.CallGlobal(string name)`** — 便捷方法：调用无参无返回值的全局函数
+  - 自动处理 GetGlobal → PCall(0, 0)，失败时抛出 `InvalidOperationException`
+- **`LuaVM.CallGlobalForNumber(string name)`** — 调用无参全局函数并获取数值返回值
+  - 自动验证返回值类型为数值
+- **`LuaVM.CallGlobalForString(string name)`** — 调用无参全局函数并获取字符串返回值
+  - 自动验证返回值类型为字符串
+- **含参数函数调用**：使用底层 API 组合模式，灵活性高
+  ```csharp
+  vm.GetGlobal("add");
+  vm.PushNumber(10);
+  vm.PushNumber(20);
+  vm.PCall(2, 1);
+  double result = vm.GetNumber(-1);
+  vm.ClearStack();
+  ```
+
+#### Test Coverage (7 new tests)
+- `pcall_global_function` — 调用 Lua 脚本中定义的全局函数 `add(a,b)`，验证返回值 30
+- `pcall_module_function` — 调用 Lua 模块表内函数 `math_ext.multiply(a,b)`，验证返回值 42
+- `pcall_with_string_args` — 调用接受字符串参数并返回字符串的函数 `concat(a,b)`，验证 C ↔ Lua 字符串传递
+- `pcall_void_function` — 调用无参无返回值函数 `set_flag()`，通过副作用验证执行
+- `pcall_multiple_returns` — 调用返回多个值的函数 `get_minmax(a,b)`，验证 `nresults = -1`（LUA_MULTRET）返回 2 个值
+- `pcall_runtime_error` — 调用会抛出错误的函数，验证错误信息正确记录、栈正确清理
+- `pcall_null_opaque` — null opaque 安全性验证
+
+#### 构建与测试结果
+- **C++ 原生测试**: 41/41 通过 (MSVC 19.51)
+- **C# Debug 构建**: 0 警告, 0 错误
+- **C# Release 构建**: 0 警告, 0 错误
+
+#### Files Modified
+- `src/include/lvm_api.h` — 新增 `LVM_PCall` 声明及详细使用文档（含全局函数和模块函数调用示例）
+- `src/lvm/lvm_api.cpp` — 新增 `LVM_PCall` 实现（约 45 行），完整错误处理与栈清理逻辑
+- `csharp/LuaVM/LuaVM.cs` — 新增 P/Invoke 声明、`PCall` 底层方法、`CallGlobal`/`CallGlobalForNumber`/`CallGlobalForString` 三个高层便捷方法
+- `tests/test_main.cpp` — 新增 7 个测试用例（约 180 行），覆盖全局函数调用、模块函数调用、多参数、多返回值、字符串传递、错误处理、null 安全
+- `changelog/CHANGELOG.md` — 本文档
+
 ## [1.4.0] - 2026-04-27
 
 ### Added — AOT Support (Issue #4)

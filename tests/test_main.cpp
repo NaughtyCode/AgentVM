@@ -665,6 +665,215 @@ TEST(batch_load_nonexistent_dir) {
 }
 
 /* ==========================================================================
+ * 测试：函数调用 —— LVM_PCall（调用脚本中定义的全局函数和模块内函数）
+ * ========================================================================== */
+
+/**
+ * @brief 测试：通过 PCall 调用 Lua 脚本中定义的全局函数
+ * 核心场景：脚本定义 function add(a,b) return a+b end，然后从 C 侧调用
+ */
+TEST(pcall_global_function) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 1. 执行 Lua 脚本，定义一个全局函数 */
+    int result = LVM_ExecuteString(vm,
+        "function add(a, b)\n"
+        "    return a + b\n"
+        "end\n"
+    );
+    TEST_ASSERT(result == 0, "Script should define add() successfully");
+
+    /* 2. 通过 PCall 调用全局函数 add(10, 20) */
+    LVM_GetGlobal(vm, "add");       // 栈: [add]
+    LVM_PushNumber(vm, 10.0);       // 栈: [add, 10]
+    LVM_PushNumber(vm, 20.0);       // 栈: [add, 10, 20]
+    result = LVM_PCall(vm, 2, 1);   // 栈: [30]（2 个参数，1 个返回值）
+    TEST_ASSERT(result == 0, "PCall should succeed");
+
+    /* 3. 验证返回值 10 + 20 = 30 */
+    TEST_ASSERT(LVM_GetTop(vm) == 1, "Should have 1 result on stack");
+    TEST_ASSERT(LVM_IsNumber(vm, -1), "Result should be a number");
+    double sum = LVM_ToNumber(vm, -1);
+    TEST_ASSERT(std::fabs(sum - 30.0) < 0.0001, "10 + 20 should be 30");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：通过 PCall 调用 Lua 模块（表）内的函数
+ * 核心场景：脚本定义 math_ext = { multiply = function(a,b) return a*b end }
+ *          然后从 C 侧通过栈操作调用 math_ext.multiply
+ */
+TEST(pcall_module_function) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 1. 执行 Lua 脚本，定义一个包含函数的模块表 */
+    int result = LVM_ExecuteString(vm,
+        "math_ext = {\n"
+        "    multiply = function(a, b)\n"
+        "        return a * b\n"
+        "    end,\n"
+        "    version = '2.0'\n"
+        "}\n"
+    );
+    TEST_ASSERT(result == 0, "Module script should execute successfully");
+
+    /* 2. 通过栈操作调用模块函数 math_ext.multiply(6, 7)
+     *    栈操作顺序: 先压入模块表 → 获取函数 → 压参数 → pcall
+     */
+    LVM_GetGlobal(vm, "math_ext");      // 栈: [math_ext]
+    LVM_GetField(vm, -1, "multiply");    // 栈: [math_ext, multiply]
+    LVM_PushNumber(vm, 6.0);             // 栈: [math_ext, multiply, 6]
+    LVM_PushNumber(vm, 7.0);             // 栈: [math_ext, multiply, 6, 7]
+    result = LVM_PCall(vm, 2, 1);        // 栈: [math_ext, 42]
+    TEST_ASSERT(result == 0, "Module function call should succeed");
+
+    /* 3. 验证返回值 6 * 7 = 42（结果在栈顶） */
+    TEST_ASSERT(LVM_IsNumber(vm, -1), "Result should be a number");
+    double product = LVM_ToNumber(vm, -1);
+    TEST_ASSERT(std::fabs(product - 42.0) < 0.0001, "6 * 7 should be 42");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：PCall 调用带字符串参数和返回值的函数
+ * 验证非数值类型的参数传递和返回值获取
+ */
+TEST(pcall_with_string_args) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 1. 定义字符串拼接函数 */
+    int result = LVM_ExecuteString(vm,
+        "function concat(a, b)\n"
+        "    return a .. ' ' .. b\n"
+        "end\n"
+    );
+    TEST_ASSERT(result == 0, "Script should define concat() successfully");
+
+    /* 2. 调用 concat('Hello', 'World') */
+    LVM_GetGlobal(vm, "concat");        // 栈: [concat]
+    LVM_PushString(vm, "Hello");        // 栈: [concat, "Hello"]
+    LVM_PushString(vm, "World");        // 栈: [concat, "Hello", "World"]
+    result = LVM_PCall(vm, 2, 1);       // 栈: ["Hello World"]
+    TEST_ASSERT(result == 0, "PCall with string args should succeed");
+
+    /* 3. 验证返回值 */
+    TEST_ASSERT(LVM_IsString(vm, -1), "Result should be a string");
+    const char* str = LVM_ToString(vm, -1);
+    TEST_ASSERT(std::strcmp(str, "Hello World") == 0,
+        "concat('Hello', 'World') should be 'Hello World'");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：PCall 调用无参数无返回值的函数
+ * 验证最简调用形式的正确性
+ */
+TEST(pcall_void_function) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 1. 定义无参无返回值函数（通过设置全局变量的副作用来验证） */
+    int result = LVM_ExecuteString(vm,
+        "function set_flag()\n"
+        "    flag = true\n"
+        "end\n"
+    );
+    TEST_ASSERT(result == 0, "Script should define set_flag() successfully");
+
+    /* 2. 调用 set_flag() */
+    LVM_GetGlobal(vm, "set_flag");      // 栈: [set_flag]
+    result = LVM_PCall(vm, 0, 0);       // 栈: []
+    TEST_ASSERT(result == 0, "PCall with no args/results should succeed");
+    TEST_ASSERT(LVM_GetTop(vm) == 0, "Stack should be empty after void call");
+
+    /* 3. 验证副作用：flag 应该被设置为 true */
+    LVM_GetGlobal(vm, "flag");
+    TEST_ASSERT(LVM_ToBoolean(vm, 1) == 1, "flag should be true after set_flag()");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：PCall 调用返回多个值的函数
+ * 验证多返回值场景（nresults = -1 获取所有返回值）
+ */
+TEST(pcall_multiple_returns) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 1. 定义返回多个值的函数 */
+    int result = LVM_ExecuteString(vm,
+        "function get_minmax(a, b)\n"
+        "    if a < b then return a, b end\n"
+        "    return b, a\n"
+        "end\n"
+    );
+    TEST_ASSERT(result == 0, "Script should define get_minmax() successfully");
+
+    /* 2. 调用 get_minmax(10, 3)，期望返回所有值（nresults = -1 = LUA_MULTRET） */
+    LVM_GetGlobal(vm, "get_minmax");    // 栈: [get_minmax]
+    LVM_PushNumber(vm, 10.0);           // 栈: [get_minmax, 10]
+    LVM_PushNumber(vm, 3.0);            // 栈: [get_minmax, 10, 3]
+    result = LVM_PCall(vm, 2, -1);      // -1 = LUA_MULTRET: 返回所有值
+    TEST_ASSERT(result == 0, "PCall with multiple returns should succeed");
+
+    /* 3. 验证有两个返回值，且顺序正确（先小后大） */
+    TEST_ASSERT(LVM_GetTop(vm) == 2, "Should have 2 results on stack");
+    double first = LVM_ToNumber(vm, 1);
+    double second = LVM_ToNumber(vm, 2);
+    TEST_ASSERT(std::fabs(first - 3.0) < 0.0001, "First return should be min = 3");
+    TEST_ASSERT(std::fabs(second - 10.0) < 0.0001, "Second return should be max = 10");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：PCall 调用会产生运行时错误的函数
+ * 验证错误处理路径：错误信息正确设置且栈被清理
+ */
+TEST(pcall_runtime_error) {
+    void* vm = LVM_Create(1);
+    TEST_ASSERT(vm != nullptr, "LVM_Create failed");
+
+    /* 1. 定义一个会出错的函数 */
+    int result = LVM_ExecuteString(vm,
+        "function bad_func()\n"
+        "    error('intentional test error')\n"
+        "end\n"
+    );
+    TEST_ASSERT(result == 0, "Script should define bad_func() successfully");
+
+    /* 2. 调用 bad_func()，预期会失败 */
+    LVM_GetGlobal(vm, "bad_func");
+    result = LVM_PCall(vm, 0, 0);
+    TEST_ASSERT(result != 0, "PCall on error-throwing function should return non-zero");
+
+    /* 3. 验证错误信息被正确记录 */
+    const char* err = LVM_GetLastError(vm);
+    TEST_ASSERT(err != nullptr && std::strlen(err) > 0,
+        "Error message should be set on PCall failure");
+
+    /* 4. 验证栈已被清理（错误处理后栈应为空） */
+    TEST_ASSERT(LVM_GetTop(vm) == 0, "Stack should be clean after error");
+
+    LVM_Destroy(vm);
+}
+
+/**
+ * @brief 测试：PCall 传入 null opaque 的安全性
+ */
+TEST(pcall_null_opaque) {
+    int result = LVM_PCall(nullptr, 0, 0);
+    TEST_ASSERT(result == -1, "PCall with null opaque should return -1");
+}
+
+/* ==========================================================================
  * 测试：外部函数注册
  * ========================================================================== */
 

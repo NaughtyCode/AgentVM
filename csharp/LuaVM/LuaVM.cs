@@ -157,6 +157,10 @@ namespace LuaVM
         [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
         private static extern void LVM_SetField(IntPtr opaque, int index, string key);
 
+        // ---- 函数调用 ----
+        [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int LVM_PCall(IntPtr opaque, int nargs, int nresults);
+
         // ---- 外部函数注册 ----
         [DllImport(NativeLib, CallingConvention = CallingConvention.Cdecl)]
         private static extern int LVM_RegisterFunction(IntPtr opaque, string name, IntPtr func);
@@ -449,6 +453,110 @@ namespace LuaVM
         {
             EnsureNotDisposed();
             LVM_SetField(_opaque, index, key);
+        }
+
+        /* ====================================================================
+         * 公共方法 —— 函数调用
+         * ==================================================================== */
+
+        /// <summary>
+        /// 以保护模式调用栈上的 Lua 函数
+        /// 调用前栈布局: [..., func, arg1, ..., argN]
+        /// 调用后栈布局: [..., result1, ..., resultM]
+        /// </summary>
+        /// <param name="nargs">传递给函数的参数个数</param>
+        /// <param name="nresults">期望的返回值个数（-1 表示返回所有值）</param>
+        /// <returns>0 = 成功，非 0 = 运行时错误（通过 GetLastError 获取详情）</returns>
+        /// <exception cref="ObjectDisposedException">实例已释放时抛出</exception>
+        public int PCall(int nargs, int nresults)
+        {
+            EnsureNotDisposed();
+            return LVM_PCall(_opaque, nargs, nresults);
+        }
+
+        /// <summary>
+        /// 调用 Lua 全局函数（无参数，无返回值）
+        /// 这是最简单的全局函数调用形式
+        /// </summary>
+        /// <param name="name">全局函数名</param>
+        /// <example>
+        /// vm.Execute("function greet() print('hello') end");
+        /// vm.CallGlobal("greet");  // 调用 greet()
+        /// </example>
+        public void CallGlobal(string name)
+        {
+            EnsureNotDisposed();
+            GetGlobal(name);         // 压入函数
+            int ret = LVM_PCall(_opaque, 0, 0);  // 0 参数，0 返回值
+            if (ret != 0)
+            {
+                string err = GetLastError();
+                ClearStack();
+                throw new InvalidOperationException(
+                    $"CallGlobal('{name}') failed: {err}");
+            }
+        }
+
+        /// <summary>
+        /// 调用 Lua 全局函数并获取一个数值返回值（无参数）
+        /// </summary>
+        /// <param name="name">全局函数名</param>
+        /// <returns>函数的数值返回值</returns>
+        /// <exception cref="InvalidOperationException">调用失败或返回值不是数值时抛出</exception>
+        /// <example>
+        /// vm.Execute("function get_answer() return 42 end");
+        /// double answer = vm.CallGlobalForNumber("get_answer");
+        /// </example>
+        public double CallGlobalForNumber(string name)
+        {
+            EnsureNotDisposed();
+            GetGlobal(name);         // 压入函数
+            int ret = LVM_PCall(_opaque, 0, 1);  // 0 参数，1 返回值
+            if (ret != 0)
+            {
+                string err = GetLastError();
+                ClearStack();
+                throw new InvalidOperationException(
+                    $"CallGlobalForNumber('{name}') failed: {err}");
+            }
+            if (!IsNumber(-1))
+            {
+                ClearStack();
+                throw new InvalidOperationException(
+                    $"CallGlobalForNumber('{name}'): return value is not a number");
+            }
+            double val = GetNumber(-1);
+            ClearStack();
+            return val;
+        }
+
+        /// <summary>
+        /// 调用 Lua 全局函数并获取一个字符串返回值（无参数）
+        /// </summary>
+        /// <param name="name">全局函数名</param>
+        /// <returns>函数的字符串返回值</returns>
+        /// <exception cref="InvalidOperationException">调用失败或返回值不是字符串时抛出</exception>
+        public string CallGlobalForString(string name)
+        {
+            EnsureNotDisposed();
+            GetGlobal(name);         // 压入函数
+            int ret = LVM_PCall(_opaque, 0, 1);  // 0 参数，1 返回值
+            if (ret != 0)
+            {
+                string err = GetLastError();
+                ClearStack();
+                throw new InvalidOperationException(
+                    $"CallGlobalForString('{name}') failed: {err}");
+            }
+            if (!IsString(-1))
+            {
+                ClearStack();
+                throw new InvalidOperationException(
+                    $"CallGlobalForString('{name}'): return value is not a string");
+            }
+            string val = GetString(-1);
+            ClearStack();
+            return val;
         }
 
         /* ====================================================================
