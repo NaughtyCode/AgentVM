@@ -1,0 +1,9 @@
+
+已知遗留问题（记录在 changelog 中）
+1. ErrorBuffer::get() 同一 opaque 并发访问竞争
+2. lvm_bridge_callback 绕过后端抽象（Luau 不支持外部函数注册）
+3. CMakeLists.txt LuaJIT/Luau 构建链路不完整
+4. LUA_BUILD_AS_DLL 用于静态库
+5. TEST 宏在静态初始化阶段执行
+6. 缺少 LuaJIT/Luau 后端测试
+
